@@ -1,0 +1,8 @@
+
+func add(a : int, b : int) : int {
+  return a + b;
+}
+
+val number = add(2, 3);
+var b : int = number;
+
