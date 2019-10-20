@@ -1,0 +1,15 @@
+type hello = int;
+
+func double(a: int): int {
+  return a + a;
+}
+
+func add(a: int, b: int): int {
+  return a + b;
+}
+
+val x = 12;
+
+func triple(a: int): int {
+  return double(a) + a;
+}
