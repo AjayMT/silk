@@ -1,0 +1,7 @@
+
+(menhir (modules parser))
+(ocamllex lexer)
+(executable
+ (name silk)
+ (modules lexer parser parsetree silk)
+ (libraries llvm))
