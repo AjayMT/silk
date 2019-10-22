@@ -44,7 +44,7 @@ val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
 
 func_decl: FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
-compound_statement                             { Func ($2, $4, $7, $9) }
+compound_statement                             { Func ($2, $4, $7, $8) }
 ;
 
 argument_list:                                 { [] }

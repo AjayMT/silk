@@ -1,5 +1,7 @@
 
 func add(a : int, b : int) : int {
+  var asdf = 1;
+  var quuz : int = asdf;
   return a + b;
 }
 

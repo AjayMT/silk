@@ -1,5 +1,6 @@
 #!/bin/sh
 
+rm -f silk
 pushd src
 dune build silk.exe --profile release
 popd
