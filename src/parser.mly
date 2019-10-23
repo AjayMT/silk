@@ -5,7 +5,9 @@
 
 %token <string> IDENTIFIER
 %token <int> INT_LITERAL
-%token PLUS EQ
+%token EQ
+%token LESSTHAN
+%token PLUS
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
 %token INT VOID
@@ -90,6 +92,7 @@ expr: IDENTIFIER                 { Identifier $1 }
   | expr LBRACKET expr RBRACKET  { Index ($1, $3) }
   | expr LPAREN expr_list RPAREN { FunctionCall ($1, $3) }
   | expr PLUS expr               { BinOp ($1, Plus, $3) }
+  | expr LESSTHAN expr           { BinOp ($1, LessThan, $3) }
 ;
 
 expr_list:               { [] }

@@ -1,7 +1,11 @@
 
 func add(a : int, b : int) : int {
   var asdf = 1;
-  var quuz : int = asdf;
+  val quuz : int = asdf;
+  for var i = 0; i < 10; i = i + 1 {
+    asdf = i + 10;
+  }
+
   return a + b;
 }
 

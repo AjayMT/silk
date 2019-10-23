@@ -47,15 +47,17 @@ let rec eval_expr_type symtab_stack expr = match expr with
      end
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
   | Parsetree.Assignment (n, e) ->
-     begin
-       match (eval_expr_type symtab_stack (Identifier n),
-              eval_expr_type symtab_stack e) with
-       | (Error e, _) -> Error e
-       | (_, Error e) -> Error e
-       | (Ok a, Ok b) ->
-          if compare_types a b then Ok a else
-            Error ("Error: Mismatched types in assignment of " ^ n)
-     end
+     Result.bind (eval_expr_type symtab_stack e)
+       begin
+         fun exprtype ->
+         match (find_symtab_stack n symtab_stack) with
+         | Some Value (Var, idtype, _) ->
+            if compare_types idtype exprtype then Ok exprtype
+            else Error ("Error: Mismatched types in assignment of " ^ n)
+         | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
+         | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
+         | None -> Error ("Error: Identifier " ^ n ^ " not defined")
+       end
   | Parsetree.FunctionCall (f, args) ->
      begin
        let match_arg_types argtypes exprs =
@@ -86,6 +88,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
        | (Error e, _, _) -> Error e
        | (_, _, Error e) -> Error e
        | (Ok Int, Plus, Ok Int) -> Ok Int
+       | (Ok Int, LessThan, Ok Int) -> Ok Bool
        | _ -> Error ("Error: Incorrect types for binary operation")
      end
   | Parsetree.Index (array, idx) -> Ok Int
@@ -134,8 +137,8 @@ let trav_valdecl symtab symtab_stack types_tab vd =
      check_declared_type Var ident asttype expr
 
 
-let rec construct_block_symtab symtab_stack types_tab stmts =
-  let addblk block_number symtab blk =
+let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
+  let addblk block_number symtab new_base blk =
     let new_symtab st = SymTab.add (string_of_int block_number)
                           (Value
                              (Val, Void,
@@ -144,7 +147,7 @@ let rec construct_block_symtab symtab_stack types_tab stmts =
     in
     Result.map
       (fun st -> (block_number + 1, new_symtab st))
-      (construct_block_symtab (symtab :: symtab_stack) types_tab blk)
+      (construct_block_symtab new_base (symtab :: symtab_stack) types_tab blk)
   in
 
   let trav_stmt acc stmt =
@@ -157,7 +160,7 @@ let rec construct_block_symtab symtab_stack types_tab stmts =
     | Parsetree.Expr exp -> Result.map
                               (fun _ -> (block_number, symtab))
                               (eval_expr_type (symtab :: symtab_stack) exp)
-    | Parsetree.Block blk -> addblk block_number symtab blk
+    | Parsetree.Block blk -> addblk block_number symtab SymTab.empty blk
     | Parsetree.IfElse (exp, ifstmt, elsestmt) ->
        begin
          match ifstmt with
@@ -167,17 +170,17 @@ let rec construct_block_symtab symtab_stack types_tab stmts =
                 fun expr_t ->
                 match expr_t with
                 | Bool ->
-                   let ifresult = addblk block_number symtab ifblk in
+                   let ifresult = addblk block_number symtab SymTab.empty ifblk in
                    begin
                      match elsestmt with
                      | Parsetree.Block elseblk ->
-                        Result.bind ifresult (fun (b, s) -> addblk b s elseblk)
+                        Result.bind ifresult (fun (b, s) -> addblk b s SymTab.empty elseblk)
                      | Parsetree.Empty -> ifresult
-                     | _ -> Error "Error: Not a block."
+                     | _ -> Error "Error: Not a block"
                    end
                 | _ -> Error "Error: Expected boolean expression in 'if' condition"
               end
-         | _ -> Error "Error: Not a block."
+         | _ -> Error "Error: Not a block"
        end
     | Parsetree.While (exp, whilestmt) ->
        begin
@@ -187,18 +190,17 @@ let rec construct_block_symtab symtab_stack types_tab stmts =
               begin
                 fun expr_t ->
                 match expr_t with
-                | Bool -> addblk block_number symtab blk
+                | Bool -> addblk block_number symtab SymTab.empty blk
                 | _ -> Error "Error: Expected boolean expression in 'while' condition"
               end
-         | _ -> Error "Error: Not a block."
+         | _ -> Error "Error: Not a block"
        end
     | Parsetree.For (vd, condexp, incexp, forblk) ->
        begin
          match forblk with
          | Parsetree.Block blk ->
-            let local_symtab = SymTab.empty in
             let vd_result =
-              trav_valdecl local_symtab (symtab :: symtab_stack) types_tab vd
+              trav_valdecl SymTab.empty (symtab :: symtab_stack) types_tab vd
             in
             Result.bind vd_result
               begin
@@ -207,24 +209,34 @@ let rec construct_block_symtab symtab_stack types_tab stmts =
                   (eval_expr_type (local_symtab :: symtab :: symtab_stack) condexp)
                   begin
                     fun condexp_t ->
-                    match condexp_t with
-                    (* TODO *)
-                    | Bool -> Ok (block_number, symtab)
-                    | _ ->
-                       Error "Error: Expected boolean expression in 'for' condition"
+                    Result.bind
+                      (eval_expr_type (local_symtab :: symtab :: symtab_stack) incexp)
+                      begin
+                        fun incexp_t ->
+                        match condexp_t with
+                        | Bool -> addblk block_number symtab local_symtab blk
+                        | _ ->
+                           Error "Error: Expected boolean expression in 'for' condition"
+                      end
                   end
               end
-         | _ -> Error "Error: Not a block."
+         | _ -> Error "Error: Not a block"
        end
     | Parsetree.Return (exo) ->
        begin
          match exo with
-         | Some _ -> Ok (block_number, symtab)
+         (* TODO check that return type matches *)
+         | Some exp ->
+            Result.bind (eval_expr_type (symtab :: symtab_stack) exp)
+              begin
+                fun expr_t ->
+                Ok (block_number, symtab)
+              end
          | None -> Ok (block_number, symtab)
        end
     | Parsetree.Continue | Parsetree.Break -> Ok (block_number, symtab)
   in
-  Result.map (fun (_, s) -> s) (fold_left_bind trav_stmt (0, SymTab.empty) stmts)
+  Result.map (fun (_, s) -> s) (fold_left_bind trav_stmt (0, base_symtab) stmts)
 
 let construct_symtab ast =
   let trav_funcdecl symtab fd =
@@ -255,8 +267,8 @@ let construct_symtab ast =
                               (Value (Val, Function (ats, rt),
                                       Right (body, st)))
                               symtab)
-                 (construct_block_symtab [symtab] symtab blk)
-            | _ -> Error "Error: Not a block."
+                 (construct_block_symtab SymTab.empty [symtab] symtab blk)
+            | _ -> Error "Error: Not a block"
           end
        | (Error e, _) -> Error e
        | (_, Error e) -> Error e

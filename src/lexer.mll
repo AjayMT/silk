@@ -29,6 +29,7 @@ rule token = parse
 | ";"         { SEMICOLON }
 | ","         { COMMA }
 | "+"         { PLUS }
+| "<"         { LESSTHAN }
 | "="         { EQ }
 | "("         { LPAREN }
 | ")"         { RPAREN }

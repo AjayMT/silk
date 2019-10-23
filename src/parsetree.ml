@@ -5,7 +5,7 @@
 
 type literal = LInt of int
 
-type op = Plus
+type op = Plus | LessThan
 
 type expr = Identifier of string | Literal of literal | Assignment of string * expr
             | FunctionCall of expr * expr list | BinOp of expr * op * expr
