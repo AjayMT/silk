@@ -35,7 +35,7 @@ top_decl: type_def { TypeDef $1 }
   | func_decl      { FuncDecl $1 }
 ;
 
-type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { Type ($2, $4) }
+type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
 ;
 
 val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
@@ -46,7 +46,7 @@ val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
 
 func_decl: FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
-compound_statement                             { Func ($2, $4, $7, $8) }
+compound_statement                             { ($2, $4, $7, $8) }
 ;
 
 argument_list:                                 { [] }

@@ -16,7 +16,7 @@ type type_ = Int | Void | NewType of string
 type val_decl = ValI of string * expr | Val of string * type_ * expr
                 | VarI of string * expr | Var of string * type_ * expr
 
-type type_def = Type of string * type_
+type type_def = string * type_
 
 type statement = Empty | Decl of val_decl | Expr of expr | Block of statement list
                  | IfElse of expr * statement * statement
@@ -24,6 +24,6 @@ type statement = Empty | Decl of val_decl | Expr of expr | Block of statement li
                  | For of val_decl * expr * expr * statement
                  | Continue | Break | Return of expr option
 
-type func_decl = Func of string * (string * type_) list * type_ * statement
+type func_decl = string * (string * type_) list * type_ * statement
 
 type top_decl = TypeDef of type_def | ValDecl of val_decl | FuncDecl of func_decl

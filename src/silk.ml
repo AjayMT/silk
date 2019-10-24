@@ -8,9 +8,7 @@ type valness = Val | Var
 type silktype = Int | Bool | Void | Function of (silktype list) * silktype
                 | NewType of string * silktype
 
-type symbol = Value of valness * silktype *
-                         (Parsetree.expr,
-                          Parsetree.statement * symbol SymTab.t) either
+type symbol = Value of valness * silktype * symbol SymTab.t option
             | Type of silktype
 
 let rec fold_left_bind f acc l = match l with
@@ -43,7 +41,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
        match find_symtab_stack name symtab_stack with
        | Some (Type _) -> Error ("Error: Expected value, found type: " ^ name)
        | Some (Value (_, t, _)) -> Ok t
-       | None -> Error ("Error: Identifier " ^ name ^ " not defined")
+       | None -> Error ("Error: Identifier " ^ name ^ " undefined")
      end
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
   | Parsetree.Assignment (n, e) ->
@@ -56,7 +54,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
             else Error ("Error: Mismatched types in assignment of " ^ n)
          | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
          | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
-         | None -> Error ("Error: Identifier " ^ n ^ " not defined")
+         | None -> Error ("Error: Identifier " ^ n ^ " undefined")
        end
   | Parsetree.FunctionCall (f, args) ->
      begin
@@ -109,7 +107,7 @@ let trav_valdecl symtab symtab_stack types_tab vd =
     | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
     | None ->
        Result.map
-         (fun stype -> SymTab.add ident (Value (mut, stype, Left expr)) symtab)
+         (fun stype -> SymTab.add ident (Value (mut, stype, None)) symtab)
          (eval_expr_type (symtab :: symtab_stack) expr)
   in
 
@@ -123,7 +121,7 @@ let trav_valdecl symtab symtab_stack types_tab vd =
          (fun rstype ->
            Result.bind lefttype (fun lstype ->
                if compare_types lstype rstype then
-                 Ok (SymTab.add ident (Value (mut, lstype, Left expr)) symtab)
+                 Ok (SymTab.add ident (Value (mut, lstype, None)) symtab)
                else
                  Error ("Error: mismatched types in declaration of " ^ ident)))
   in
@@ -140,9 +138,7 @@ let trav_valdecl symtab symtab_stack types_tab vd =
 let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
   let addblk block_number symtab new_base blk =
     let new_symtab st = SymTab.add (string_of_int block_number)
-                          (Value
-                             (Val, Void,
-                              Right (Parsetree.Block blk, st)))
+                          (Value (Val, Void, Some st))
                           symtab
     in
     Result.map
@@ -174,7 +170,9 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
                    begin
                      match elsestmt with
                      | Parsetree.Block elseblk ->
-                        Result.bind ifresult (fun (b, s) -> addblk b s SymTab.empty elseblk)
+                        Result.bind
+                          ifresult
+                          (fun (b, s) -> addblk b s SymTab.empty elseblk)
                      | Parsetree.Empty -> ifresult
                      | _ -> Error "Error: Not a block"
                    end
@@ -222,7 +220,7 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
               end
          | _ -> Error "Error: Not a block"
        end
-    | Parsetree.Return (exo) ->
+    | Parsetree.Return exo ->
        begin
          match exo with
          (* TODO check that return type matches *)
@@ -240,46 +238,51 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
 
 let construct_symtab ast =
   let trav_funcdecl symtab fd =
-    let Parsetree.Func (ident, arglist, ret_asttype, body) = fd in
+    let (ident, arglist, ret_asttype, body) = fd in
     match SymTab.find_opt ident symtab with
     | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
     | None ->
-       let argtypes_unresolved =
-         List.map
-           (fun (_, asttype) -> silktype_of_asttype symtab asttype)
-           arglist
+       let define_arg acc argtuple =
+         let (new_symtab, argtypes) = acc in
+         let (name, asttype) = argtuple in
+         Result.bind (silktype_of_asttype symtab asttype)
+           begin
+             fun argtype ->
+             match SymTab.find_opt name new_symtab with
+             | Some _ -> Error ("Error: Duplicate argument " ^ name)
+             | None -> Ok (SymTab.add name (Value (Val, argtype, None)) new_symtab,
+                           argtype :: argtypes)
+           end
        in
-       let argtypes_resolver acc rt =
-         Result.map (fun t -> t :: acc) rt
-       in
-       let argtypes =
-         Result.map List.rev
-           (fold_left_bind argtypes_resolver [] argtypes_unresolved)
-       in
-       let rettype = silktype_of_asttype symtab ret_asttype in
-       match (argtypes, rettype) with
-       | (Ok ats, Ok rt) ->
-          begin
-            match body with
-            | Parsetree.Block blk ->
-               Result.map
-                 (fun st -> SymTab.add ident
-                              (Value (Val, Function (ats, rt),
-                                      Right (body, st)))
-                              symtab)
-                 (construct_block_symtab SymTab.empty [symtab] symtab blk)
-            | _ -> Error "Error: Not a block"
-          end
-       | (Error e, _) -> Error e
-       | (_, Error e) -> Error e
+       Result.bind
+         (fold_left_bind define_arg (SymTab.empty, []) arglist)
+         begin
+           fun arg_result ->
+           let (new_symtab, argtypes) = match arg_result with
+             | (a, b) -> (a, List.rev b)
+           in
+           Result.bind (silktype_of_asttype symtab ret_asttype)
+             begin
+               fun rettype ->
+               match body with
+               | Parsetree.Block blk ->
+                  Result.map
+                    (fun st -> SymTab.add ident
+                                 (Value (Val, Function (argtypes, rettype), Some st))
+                                 symtab)
+                    (construct_block_symtab new_symtab [symtab] symtab blk)
+               | _ -> Error "Error: Not a block"
+             end
+         end
   in
 
   let trav_ast symtab decl = match (symtab, decl) with
-    | (symtab, Parsetree.TypeDef (Type (ident, basetype))) ->
+    | (symtab, Parsetree.TypeDef (ident, basetype)) ->
        begin
          match SymTab.find_opt ident symtab with
          | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
-         | None -> Result.map (fun t -> SymTab.add ident (Type t) symtab)
+         | None -> Result.map
+                     (fun t -> SymTab.add ident (Type t) symtab)
                      (silktype_of_asttype symtab basetype)
        end
     | (symtab, ValDecl vd) -> trav_valdecl symtab [] symtab vd
