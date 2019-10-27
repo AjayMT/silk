@@ -3,14 +3,16 @@
  * LLVM Code generation.
  *)
 
+type block_type = Block | IfElse | For | While
+
 type llvm_type = I1 | I8 | I16 | I32 | I64
+                 | U1 | U8 | U16 | U32 | U64
                  | Pointer of llvm_type
                  | Function of llvm_type list * llvm_type
                  | Void
 
 type llvm_value = Temporary of llvm_type * int
                 | Named of llvm_type * string
-                | BlockLabel of int * string * string
                 | Literal of Parsetree.literal
                 | NoValue
 
@@ -20,7 +22,14 @@ type llvm_inst = Alloca of llvm_type
                | Call of llvm_type * llvm_value * llvm_value list
                | Ret of llvm_value
                | Add of llvm_value * llvm_value
+               | Label of string * llvm_inst
                | Empty
+
+let get_type value l_type = match value with
+  | Temporary (t, _) -> t
+  | Named (t, _) -> t
+  | NoValue -> Void
+  | Literal (Parsetree.LInt l) -> l_type
 
 let rec llvm_type_of_silktype t =
   match t with
@@ -45,6 +54,31 @@ let rec llvm_type_of_silktype t =
   | Symtab.Void -> Ok Void
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
+let codegen_assign =
+  fun id (blkname, tmp_idx, insts, last_result, symtab_stack) ->
+  let lt = match last_result with
+    | Literal l ->
+       begin
+         match Symtab.find_symtab_stack id symtab_stack with
+         | None -> Ok Void
+         | Some (Symtab.Value (_, t, _)) -> llvm_type_of_silktype t
+         | _ -> Error ("Error: Expected value, found type: " ^ id)
+       end
+    | _ -> Ok Void
+  in
+  Result.map
+    begin
+      fun lt ->
+      let new_inst =
+        (NoValue,
+         Store (last_result,
+                Named (Pointer (get_type last_result lt), id)))
+      in
+      (blkname, tmp_idx, new_inst :: insts, NoValue, symtab_stack)
+    end
+    lt
+
+
 let rec codegen_expr acc expr =
   let (blkname, tmp_idx, insts, last_result, symtab_stack) = acc in
   match expr with
@@ -52,7 +86,7 @@ let rec codegen_expr acc expr =
      begin
        match Symtab.find_symtab_stack id symtab_stack with
        | None -> Error ("Error: Identifier " ^ id ^ " undefined")
-       | Some t ->
+       | Some (Symtab.Value (_, t, _)) ->
           Result.bind (llvm_type_of_silktype t)
             begin
               fun lltype ->
@@ -65,16 +99,11 @@ let rec codegen_expr acc expr =
                  let new_inst = (res, Load (Named (Pointer lltype, id))) in
                  Ok (blkname, tmp_idx + 1, new_inst :: insts, res, symtab_stack)
             end
+       | _ -> Error ("Error: Expected value, found type: " ^ id)
      end
   | Parsetree.Literal l -> Ok (blkname, tmp_idx, insts, Literal l, symtab_stack)
   | Parsetree.Assignment (id, exp) ->
-     Result.bind (codegen_expr acc exp)
-       begin
-         fun (blkname, tmp_idx, insts, last_result, symtab_stack) ->
-         (* TODO cast literals as necessary. *)
-         let new_inst = (NoValue, Store (last_result, Named (Void, id))) in
-         Ok (blkname, tmp_idx, new_inst :: insts, NoValue, symtab_stack)
-       end
+     Result.bind (codegen_expr acc exp) (fun a -> codegen_assign id a)
   | Parsetree.FunctionCall (fexp, args) ->
      Result.bind (codegen_expr acc fexp)
        begin
@@ -104,14 +133,6 @@ let rec codegen_expr acc expr =
          | (_, _) -> Error "Error: Not a function"
        end
   | Parsetree.BinOp (l_expr, op, r_expr) ->
-     let get_type value = match value with
-       | Temporary (t, _) -> t
-       | Named (t, _) -> t
-       | BlockLabel _ -> Void
-       | NoValue -> Void
-       | Literal (Parsetree.LInt l) -> I32
-     in
-
      Result.bind (codegen_expr acc l_expr)
        begin
          fun acc ->
@@ -140,7 +161,70 @@ let rec codegen_expr acc expr =
 
 let codegen_stmt acc stmt = match stmt with
   | Parsetree.Empty -> Ok acc
+  | Parsetree.Decl vd ->
+     let (id, expr) = match vd with
+       | Parsetree.Val (id, _, expr) -> (id, expr)
+       | Parsetree.ValI (id, expr) -> (id, expr)
+       | Parsetree.Var (id, _, expr) -> (id, expr)
+       | Parsetree.VarI (id, expr) -> (id, expr)
+     in
+     Result.bind (codegen_expr acc expr) (fun a -> codegen_assign id a)
+  | Parsetree.Expr expr -> codegen_expr acc expr
+  (* TODO blocks *)
+  | Parsetree.Block stmts ->
+     let (blk, tmp_idx, insts, last_result, ststack) = acc in
+     let (blk_idx, blk_name, blk_type) = blk in
+     Ok acc
   | _ -> Ok acc
 
-let codegen_func name stmts =
-  Symtab.fold_left_bind codegen_stmt (Ok (name, 0, [])) stmts
+let codegen_func name stmts st =
+  let init_acc = ((0, name, Block), 0, [], NoValue, st) in
+  Symtab.fold_left_bind codegen_stmt init_acc stmts
+
+let codegen_ast ast =
+  Result.bind (Symtab.construct_symtab ast)
+    begin
+      fun symtab ->
+      let codegen_top_decl acc decl = match decl with
+        | Parsetree.TypeDef _ -> Ok acc
+        | Parsetree.ValDecl _ -> Ok acc
+        | Parsetree.FuncDecl (name, _, _, Parsetree.Block stmts) ->
+           Result.map
+             (fun (_, _, insts, _, _) -> insts @ acc)
+             (codegen_func name stmts [symtab])
+        | _ -> Error "Error: Code generation failed"
+      in
+      Symtab.fold_left_bind codegen_top_decl [] ast
+    end
+
+let serialize_code code =
+  let rec string_of_llvm_type t = match t with
+    | I32 -> "i32"
+    | Pointer t -> (string_of_llvm_type t) ^ "*"
+    | _ -> "<type>"
+  in
+  let string_of_val lv = match lv with
+    | Temporary (_, i) -> string_of_int i
+    | Named (_, n) -> n
+    | Literal (Parsetree.LInt l) -> string_of_int l
+    | _ -> "<lval>"
+  in
+  let serialize_inst acc inst = match inst with
+    | (lv, Alloca t) ->
+       ((string_of_val lv) ^ " = alloca " ^ (string_of_llvm_type t)) :: acc
+    | (lv, Load v) ->
+       let vt = string_of_llvm_type (get_type v Void) in
+       let vstr = string_of_val v in
+       ((string_of_val lv) ^ " = load " ^ vt ^ " " ^ vstr) :: acc
+    | (lv, Store (a, b)) ->
+       let t = string_of_llvm_type (get_type a Void) in
+       ("store " ^ t ^ " " ^ (string_of_val a) ^ ", " ^ t ^ (string_of_val b)) :: acc
+    | (lv, Add (a, b)) ->
+       let t = string_of_llvm_type (get_type lv Void) in
+       let lvstr = string_of_val lv in
+       let astr = string_of_val a in
+       let bstr = string_of_val b in
+       (lvstr ^ " = add " ^ t ^ " " ^ astr ^ ", " ^ bstr) :: acc
+    | _ -> acc
+  in
+  List.fold_left serialize_inst [] code
