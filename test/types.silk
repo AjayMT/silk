@@ -6,7 +6,7 @@ func add(a : int, b : int) : int {
     asdf = i + 10;
   }
 
-  return a + b;
+  return a + add(a, b);
 }
 
 val number = add(2, 3);

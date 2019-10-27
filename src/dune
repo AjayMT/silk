@@ -3,5 +3,5 @@
 (ocamllex lexer)
 (executable
  (name silk)
- (modules lexer parser parsetree silk)
+ (modules lexer parser parsetree symtab codegen silk)
  (libraries llvm))

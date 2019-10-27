@@ -16,6 +16,7 @@
 %token EOF
 
 %nonassoc EQ
+%nonassoc LESSTHAN
 %left PLUS
 
 %start <Parsetree.top_decl list> file
@@ -80,19 +81,22 @@ block_body: statement    { [$1] }
 
 // == TODO ==
 
-type_: INT     { Int }
-  | VOID       { Void }
-  | IDENTIFIER { NewType $1 }
+type_: INT              { Int }
+  | VOID                { Void }
+  | IDENTIFIER          { NewType $1 }
+  | LPAREN type_ RPAREN { $2 }
 ;
 
-expr: IDENTIFIER                 { Identifier $1 }
-  | literal                      { Literal $1 }
-  | LPAREN expr RPAREN           { $2 }
-  | IDENTIFIER EQ expr           { Assignment ($1, $3) }
-  | expr LBRACKET expr RBRACKET  { Index ($1, $3) }
-  | expr LPAREN expr_list RPAREN { FunctionCall ($1, $3) }
-  | expr PLUS expr               { BinOp ($1, Plus, $3) }
-  | expr LESSTHAN expr           { BinOp ($1, LessThan, $3) }
+expr: IDENTIFIER                               { Identifier $1 }
+  | literal                                    { Literal $1 }
+  | LPAREN expr RPAREN                         { $2 }
+  | IDENTIFIER EQ expr                         { Assignment ($1, $3) }
+  | LPAREN expr RPAREN LBRACKET expr RBRACKET  { Index ($2, $5) }
+  | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
+  | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
+  | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
+  | expr PLUS expr                             { BinOp ($1, Plus, $3) }
+  | expr LESSTHAN expr                         { BinOp ($1, LessThan, $3) }
 ;
 
 expr_list:               { [] }
