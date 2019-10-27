@@ -10,7 +10,7 @@ let _ =
     match sc with
     | Error e -> prerr_string e
     | Ok code ->
-       let _ = List.map print_string code
+       let _ = List.fold_left (fun _ s -> print_string (s ^ "\n")) () code
        in ()
   with
   | Lexer.SyntaxError s -> prerr_string ("Syntax Error "  ^ s ^ "\n")

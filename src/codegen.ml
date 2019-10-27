@@ -201,6 +201,7 @@ let serialize_code code =
   let rec string_of_llvm_type t = match t with
     | I32 -> "i32"
     | Pointer t -> (string_of_llvm_type t) ^ "*"
+    | Void -> "void"
     | _ -> "<type>"
   in
   let string_of_val lv = match lv with
@@ -214,11 +215,14 @@ let serialize_code code =
        ((string_of_val lv) ^ " = alloca " ^ (string_of_llvm_type t)) :: acc
     | (lv, Load v) ->
        let vt = string_of_llvm_type (get_type v Void) in
+       let lvt = string_of_llvm_type (get_type lv Void) in
        let vstr = string_of_val v in
-       ((string_of_val lv) ^ " = load " ^ vt ^ " " ^ vstr) :: acc
+       let lvstr = string_of_val lv in
+       (lvstr ^ " = load " ^ lvt ^ ", " ^ vt ^ " " ^ vstr) :: acc
     | (lv, Store (a, b)) ->
-       let t = string_of_llvm_type (get_type a Void) in
-       ("store " ^ t ^ " " ^ (string_of_val a) ^ ", " ^ t ^ (string_of_val b)) :: acc
+       let at = string_of_llvm_type (get_type a Void) in
+       let bt = string_of_llvm_type (get_type b Void) in
+       ("store " ^ at ^ " " ^ (string_of_val a) ^ ", " ^ bt ^ " " ^ (string_of_val b)) :: acc
     | (lv, Add (a, b)) ->
        let t = string_of_llvm_type (get_type lv Void) in
        let lvstr = string_of_val lv in
