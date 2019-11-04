@@ -9,6 +9,5 @@ func add(a : int, b : int) : int {
   return a + add(a, b);
 }
 
-val number = add(2, 3);
-var b : int = number;
-
+val number = 3;
+var b : int = 2;
