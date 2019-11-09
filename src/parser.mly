@@ -59,7 +59,7 @@ statement: SEMICOLON              { Empty }
   | val_decl                      { Decl $1 }
   | expr SEMICOLON                { Expr $1 }
   | compound_statement            { $1 }
-  | IF expr compound_statement    { IfElse ($2, $3, Empty) }
+  | IF expr compound_statement    { IfElse ($2, $3, Block []) }
   | IF expr compound_statement
 ELSE compound_statement           { IfElse ($2, $3, $5) }
   | WHILE expr compound_statement { While ($2, $3) }

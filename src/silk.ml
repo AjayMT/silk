@@ -11,13 +11,7 @@ let _ =
     in
     match ir_tree with
     | Error e -> prerr_string e
-    | Ok exprs ->
-       let _ = List.map
-                 (fun ir_root ->
-                   match ir_root with
-                   | Codegen.StaticDecl (_, name, _) -> print_string name
-                   | Codegen.FuncDecl (_, name, _, _) -> print_string name)
-                 exprs in
-       print_string "\n"
+    | Ok irt ->
+       print_string (Codegen.serialize_irt irt)
   with
   | Lexer.SyntaxError s -> prerr_string ("Syntax Error "  ^ s ^ "\n")

@@ -1,0 +1,5 @@
+func nothing2(): int {
+  for var v = 0; v < 10; v = v + 1 {
+    var b = v + 1;
+  }
+}
