@@ -79,18 +79,18 @@ let get_ir_expr_type ir_exp = match ir_exp with
 let construct_ir_tree ast symtab =
   let rec find_in_scope scope_stack symtab_stack name =
     match symtab_stack with
-    | [] -> ([], [], Symtab.SymTab.find name symtab)
+    | [] -> ([], [], Symtab.SymtabM.find name symtab)
     | z :: zs ->
-       match Symtab.SymTab.find_opt name z with
+       match Symtab.SymtabM.find_opt name z with
        | Some v -> (scope_stack, symtab_stack, v)
        | None -> find_in_scope (List.tl scope_stack) zs name
   in
 
   let rec find_symtab_stack name symtab_stack =
     match symtab_stack with
-    | [] -> Symtab.SymTab.find_opt name symtab
+    | [] -> Symtab.SymtabM.find_opt name symtab
     | (z :: zs) ->
-       match Symtab.SymTab.find_opt name z with
+       match Symtab.SymtabM.find_opt name z with
        | Some v -> Some v
        | None -> find_symtab_stack name zs
   in
@@ -160,7 +160,7 @@ let construct_ir_tree ast symtab =
 
     let map_blk blk acc =
       let (block_idx, scope_stack, scope_map, symtab_stack, ir_stmts) = acc in
-      match Symtab.SymTab.find (string_of_int block_idx) (List.hd symtab_stack) with
+      match Symtab.SymtabM.find (string_of_int block_idx) (List.hd symtab_stack) with
       | Symtab.Value (_, _, Some new_symtab) ->
          (map_stmts
             blk
@@ -253,11 +253,11 @@ let construct_ir_tree ast symtab =
        begin
          match forblock with
          | Parsetree.Block forstmts ->
-            let new_symtab = match Symtab.SymTab.find
+            let new_symtab = match Symtab.SymtabM.find
                                      (string_of_int block_idx)
                                      (List.hd symtab_stack) with
               | Symtab.Value (_, _, Some new_symtab) -> new_symtab
-              | _ -> Symtab.SymTab.empty
+              | _ -> Symtab.SymtabM.empty
             in
             let new_symtab_stack = new_symtab :: symtab_stack in
             let new_scope_stack = (string_of_int block_idx) :: scope_stack in
@@ -323,7 +323,7 @@ let construct_ir_tree ast symtab =
            | Parsetree.VarI (n, e)    -> (n, e)
            | Parsetree.Var  (n, _, e) -> (n, e)
          in
-         match (Symtab.SymTab.find name symtab) with
+         match (Symtab.SymtabM.find name symtab) with
          | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
          | Symtab.Value (_, type_, _) ->
             let t = llvm_type_of_silktype type_ in
@@ -337,7 +337,7 @@ let construct_ir_tree ast symtab =
     | Parsetree.FuncDecl fd ->
        begin
          let (name, args_, _, body) = fd in
-         let value_ = Symtab.SymTab.find name symtab in
+         let value_ = Symtab.SymtabM.find name symtab in
          match value_ with
          | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
          | Symtab.Value (_, type_, inner_st) ->
