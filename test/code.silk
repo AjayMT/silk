@@ -2,10 +2,12 @@
 val a = 3;
 var b = 1;
 
-func nothing(): void {
-  var a = a + b;
-  if a < 1 {
-    var a = a + 1;
+func nothing(quux: int, baz: int): int {
+  var j = 0;
+
+  for var i = 0; i < 10; i = i + 1 {
+    j = i;
   }
-  var c = a;
+
+  return j;
 }

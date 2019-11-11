@@ -5,8 +5,6 @@
 
 module ScopeM = Map.Make(String)
 
-type block_type = Block | IfElse | For | While
-
 type llvm_type = I1 | I8 | I16 | I32 | I64
                  | U1 | U8 | U16 | U32 | U64
                  | Pointer of llvm_type
@@ -63,6 +61,7 @@ let rec llvm_type_of_silktype t =
   | Symtab.Void -> Void
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
+(* TODO binops, other things *)
 let resolve_literal l = match l with
   | Parsetree.Literal l -> begin
       match l with
@@ -346,7 +345,7 @@ let construct_ir_tree ast symtab =
             | Symtab.Function (argtypes, rettype) ->
                let rt = llvm_type_of_silktype rettype in
                let args = List.map
-                            (fun ((n, _), t) -> (llvm_type_of_silktype t, "@" ^ n))
+                            (fun ((n, _), t) -> (llvm_type_of_silktype t, "%" ^ n))
                             (List.combine args_ argtypes)
                in
                begin
@@ -389,8 +388,8 @@ let rec codegen_expr acc expr =
      Result.bind (codegen_expr acc rexpr)
        (fun acc ->
          let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let new_inst = (NoValue, Store (Pointer t, LNamed name, t, last_result)) in
-         Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, NoValue))
+         let new_inst = (NoValue, Store (t, last_result, Pointer t, LNamed name)) in
+         Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result))
   | FunctionCall (rt, fexp, ats, args) ->
      Result.bind (codegen_expr acc fexp)
        begin
@@ -483,11 +482,100 @@ let rec codegen_stmt acc stmt =
                (fun acc ->
                  let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
                  (cont_label, brk_label, tmp_idx,
-                  ifelse_end_label_inst :: else_end_branch_inst :: insts, NoValue)
-               )
+                  ifelse_end_label_inst :: else_end_branch_inst :: insts, NoValue))
                (Symtab.fold_left_bind codegen_stmt acc else_stmts)))
-  (* TODO for, while *)
-  | _ -> Ok acc
+  | While (while_label, cond_expr, while_stmts) ->
+     let while_label_inst = (NoValue, Label while_label) in
+     let while_end_label = while_label ^ "_end" in
+     let while_end_label_inst = (NoValue, Label while_end_label) in
+     let while_cond_label = while_label ^ "_cond" in
+     let while_cond_label_inst = (NoValue, Label while_cond_label) in
+     let branch_inst = (NoValue, Branch while_cond_label) in
+     let acc = (Some while_cond_label, Some while_end_label, tmp_idx,
+                while_label_inst :: branch_inst :: insts, NoValue) in
+     Result.bind (Symtab.fold_left_bind codegen_stmt acc while_stmts)
+       (fun acc ->
+         let (cont_label, brk_label, tmp_idx, insts, _) = acc in
+         let branch_into_cond_inst = (NoValue, Branch while_cond_label) in
+         let acc = (cont_label, brk_label, tmp_idx,
+                    while_cond_label_inst :: branch_into_cond_inst :: insts, NoValue)
+         in
+         Result.map
+           (fun acc ->
+             let (_, _, tmp_idx, insts, last_result) = acc in
+             let branch_cond_inst =
+               (NoValue,
+                BranchCond (last_result, while_label, while_end_label)) in
+             (None, None, tmp_idx,
+              while_end_label_inst :: branch_cond_inst :: insts, NoValue))
+           (codegen_expr acc cond_expr))
+  | For (for_label, decl, cond_expr, inc_expr, for_stmts) ->
+     Result.bind (codegen_stmt acc (Decl decl))
+       (fun acc ->
+         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+         let for_label_inst = (NoValue, Label for_label) in
+         let for_end_label = for_label ^ "_end" in
+         let for_end_label_inst = (NoValue, Label for_end_label) in
+         let for_body_label = for_label ^ "_body" in
+         let for_body_label_inst = (NoValue, Label for_body_label) in
+         let for_inc_label = for_label ^ "_inc" in
+         let for_inc_label_inst = (NoValue, Label for_inc_label) in
+         let branch_into_for_inst = (NoValue, Branch for_label) in
+         let acc = (Some for_inc_label, Some for_end_label, tmp_idx,
+                    for_label_inst :: branch_into_for_inst :: insts, NoValue) in
+         Result.bind (codegen_expr acc cond_expr)
+           (fun acc ->
+             let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+             let branch_cond_inst =
+               (NoValue,
+                BranchCond (last_result, for_body_label, for_end_label)) in
+             let acc = (cont_label, brk_label, tmp_idx,
+                        for_body_label_inst :: branch_cond_inst :: insts, NoValue) in
+             Result.bind (Symtab.fold_left_bind codegen_stmt acc for_stmts)
+               (fun acc ->
+                 let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+                 let branch_into_inc_inst = (NoValue, Branch for_inc_label) in
+                 let acc = (cont_label, brk_label, tmp_idx,
+                            for_inc_label_inst :: branch_into_inc_inst :: insts,
+                            NoValue) in
+                 Result.map
+                   (fun acc ->
+                     let (_, _, tmp_idx, insts, _) = acc in
+                     let branch_back_cond_inst = (NoValue, Branch for_label) in
+                     (None, None, tmp_idx,
+                      for_end_label_inst :: branch_back_cond_inst :: insts,
+                      NoValue))
+                   (codegen_expr acc inc_expr))))
+  | Continue ->
+     begin
+       match cont_label with
+       | None -> Error "Error: Invalid 'continue'"
+       | Some label ->
+          let branch_inst = (NoValue, Branch label) in
+          Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+     end
+  | Break ->
+     begin
+       match brk_label with
+       | None -> Error "Error: Invalid 'break'"
+       | Some label ->
+          let branch_inst = (NoValue, Branch label) in
+          Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+     end
+  | Return (exp_opt) ->
+     begin
+       match exp_opt with
+       | None ->
+          let ret_inst = (NoValue, Ret (Void, NoValue)) in
+          Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
+       | Some exp ->
+          Result.map
+            (fun acc ->
+              let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+              let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
+              (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue))
+            (codegen_expr acc exp)
+     end
 
 let rec serialize_type t = match t with
   | Pointer t -> (serialize_type t) ^ "*"
@@ -510,6 +598,7 @@ let serialize_value v = match v with
 let serialize_irt irt_roots =
   let rec serialize_inst = fun (value, inst) ->
     let inst_str i = match inst with
+      | NoInst -> ""
       | Alloca t -> "alloca " ^ (serialize_type t)
       | Load (lt, t, v) -> "load " ^ (serialize_type lt) ^ ", "
                            ^ (serialize_type t) ^ " " ^ (serialize_value v)
@@ -524,12 +613,16 @@ let serialize_irt irt_roots =
       | ICmpSlt (t, v1, v2) -> String.concat " " ["icmp slt"; serialize_type t;
                                                   (serialize_value v1) ^ ",";
                                                   serialize_value v2]
-      | NoInst -> ""
       | Label s -> s ^ ":"
       | Branch l -> "br label %" ^ l
       | BranchCond (v, ifl, elsel) -> "br i1 " ^ (serialize_value v) ^ ", label %"
                                       ^ ifl ^ ", label %" ^ elsel
-      | _ -> "<instruction>"
+      | Ret (t, v) -> String.concat " " ["ret"; serialize_type t; serialize_value v]
+      | Call (t, v, ts, vs) ->
+         let ts_s = String.concat ", " (List.map serialize_type ts) in
+         let vs_s = String.concat ", " (List.map serialize_value vs) in
+         String.concat " " ["call"; serialize_type t; serialize_value v;
+                            "(" ^ ts_s ^ ")"; "(" ^ vs_s ^ ")"]
     in
     match value with
     | NoValue -> inst_str inst
@@ -545,7 +638,12 @@ let serialize_irt irt_roots =
        s :: str_insts
     | FuncDecl (rt, funcname, args, body) ->
        let t_str = serialize_type rt in
-       let ns = "define " ^ t_str ^ " " ^ funcname ^ "() {" in
+       let args_str = String.concat ", "
+                        (List.map
+                           (fun (t, n) ->
+                             (serialize_type t) ^ " " ^ n)
+                           args) in
+       let ns = "define " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
        let bstmts =
          Symtab.fold_left_bind
            codegen_stmt (None, None, 0, [], NoValue) (List.rev body) in
