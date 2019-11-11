@@ -14,6 +14,7 @@ type llvm_type = I1 | I8 | I16 | I32 | I64
 type ir_literal = Int of int
 type ir_op = Plus | LessThan
 type ir_expr = Identifier of llvm_type * string
+             | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
              | Assignment of llvm_type * string * ir_expr
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
@@ -40,7 +41,7 @@ type llvm_value = LTemporary of int
 type llvm_inst = Alloca of llvm_type
                | Load of llvm_type * llvm_type * llvm_value
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
-               | Call of llvm_type * llvm_value * llvm_type list * llvm_value list
+               | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
                | Add of llvm_type * llvm_value * llvm_value
                | ICmpSlt of llvm_type * llvm_value * llvm_value
@@ -71,6 +72,7 @@ let resolve_literal l = match l with
 
 let get_ir_expr_type ir_exp = match ir_exp with
   | Identifier (t, _) -> t
+  | ParamIdentifier (t, _) -> t
   | Literal (t, _) -> t
   | Assignment (t, _, _) -> t
   | FunctionCall (t, _, _, _) -> t
@@ -344,20 +346,33 @@ let construct_ir_tree ast symtab =
             match type_ with
             | Symtab.Function (argtypes, rettype) ->
                let rt = llvm_type_of_silktype rettype in
+               let silktyped_args = List.map
+                                      (fun ((n, _), t) -> (n, t))
+                                      (List.combine args_ argtypes) in
+               let decl_of_arg = fun (n, t) ->
+                 let lt = llvm_type_of_silktype t in
+                 Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
+               let arg_decl_stmts = List.map decl_of_arg silktyped_args in
                let args = List.map
-                            (fun ((n, _), t) -> (llvm_type_of_silktype t, "%" ^ n))
-                            (List.combine args_ argtypes)
+                            (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
+                            silktyped_args
                in
                begin
                  match body with
                  | Parsetree.Block stmts ->
                     begin
                       let resolved_name = "@" ^ name in
-                      let scope_map = ScopeM.add name resolved_name scope_map in
+                      let scope_map_ = ScopeM.add name resolved_name scope_map in
+                      let scope_map =
+                        List.fold_left
+                          (fun sm (n, _) ->
+                            ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
+                          scope_map_ silktyped_args in
                       Result.map
                         (fun ir_stmts ->
                           (scope_map,
-                           (FuncDecl (rt, resolved_name, args, ir_stmts)) :: decls))
+                           (FuncDecl (rt, resolved_name, args,
+                                      ir_stmts @ arg_decl_stmts)) :: decls))
                         (map_stmts stmts [name] scope_map [Option.get inner_st])
                     end
                  | _ -> Error "Error: Function body is not a block"
@@ -382,6 +397,8 @@ let rec codegen_expr acc expr =
           let new_inst = (res, Load (t, Pointer t, LNamed name)) in
           Ok (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
      end
+  | ParamIdentifier (t, name) ->
+     Ok (cont_label, brk_label, tmp_idx, insts, (LNamed name))
   | Literal (t, lit) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
   | Assignment (t, name, rexpr) ->
@@ -406,9 +423,10 @@ let rec codegen_expr acc expr =
            (fun (args_rev, acc) ->
              let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
              let res = LTemporary tmp_idx in
-             let new_inst = (res, Call (rt, f_value, ats, List.rev args_rev)) in
-             (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
-           ) args_resolved
+             let new_inst = (res, Call (rt, f_value,
+                                        List.combine ats (List.rev args_rev))) in
+             (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res))
+           args_resolved
        end
   | BinOp (t, op, l_expr, r_expr) ->
      Result.bind (codegen_expr acc l_expr)
@@ -618,11 +636,14 @@ let serialize_irt irt_roots =
       | BranchCond (v, ifl, elsel) -> "br i1 " ^ (serialize_value v) ^ ", label %"
                                       ^ ifl ^ ", label %" ^ elsel
       | Ret (t, v) -> String.concat " " ["ret"; serialize_type t; serialize_value v]
-      | Call (t, v, ts, vs) ->
-         let ts_s = String.concat ", " (List.map serialize_type ts) in
-         let vs_s = String.concat ", " (List.map serialize_value vs) in
+      | Call (t, v, args) ->
+         let args_s = String.concat ", "
+                        (List.map
+                           (fun (t, v) -> (serialize_type t)
+                                          ^ " " ^ (serialize_value v))
+                           args) in
          String.concat " " ["call"; serialize_type t; serialize_value v;
-                            "(" ^ ts_s ^ ")"; "(" ^ vs_s ^ ")"]
+                            "(" ^ args_s ^ ")"]
     in
     match value with
     | NoValue -> inst_str inst
@@ -635,24 +656,22 @@ let serialize_irt irt_roots =
        let t_str = serialize_type t in
        let l_str = serialize_literal l in
        let s = String.concat " " [name; "="; "global"; t_str; l_str] in
-       s :: str_insts
+       Ok (s :: str_insts)
     | FuncDecl (rt, funcname, args, body) ->
        let t_str = serialize_type rt in
        let args_str = String.concat ", "
                         (List.map
-                           (fun (t, n) ->
-                             (serialize_type t) ^ " " ^ n)
+                           (fun (t, n) -> (serialize_type t) ^ " " ^ n)
                            args) in
        let ns = "define " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
        let bstmts =
          Symtab.fold_left_bind
            codegen_stmt (None, None, 0, [], NoValue) (List.rev body) in
-       let bstr = match bstmts with
-         | Ok (_, _, _, insts, _) ->
-            (List.map serialize_inst (List.rev insts)) @ str_insts
-         | Error e -> e :: str_insts
-       in
-       ns :: (String.concat "\n" bstr) :: "}" :: str_insts
+       Result.map
+         (fun (_, _, _, insts, _) ->
+           "}" :: ((List.map serialize_inst insts) @ (ns :: str_insts)))
+         bstmts
   in
-  String.concat "\n" (List.fold_left serialize_irt [] (List.rev irt_roots))
+  Result.map (fun l -> String.concat "\n" (List.rev l))
+    (Symtab.fold_left_bind serialize_irt [] irt_roots)
 

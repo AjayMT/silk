@@ -12,6 +12,8 @@ let _ =
     match ir_tree with
     | Error e -> prerr_string e
     | Ok irt ->
-       print_string (Codegen.serialize_irt irt)
+       match (Codegen.serialize_irt irt) with
+       | Ok s -> print_string s
+       | Error e -> prerr_string e
   with
   | Lexer.SyntaxError s -> prerr_string ("Syntax Error "  ^ s ^ "\n")
