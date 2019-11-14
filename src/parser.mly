@@ -5,9 +5,16 @@
 
 %token <string> IDENTIFIER
 %token <int> INT_LITERAL
-%token EQ
-%token LESSTHAN
-%token PLUS
+
+%token EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
+ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
+%token RSHIFT LSHIFT BIT_AND BIT_OR BIT_XOR BIT_NOT
+%token NOT
+%token AND OR
+%token EQUAL NOTEQUAL LESSTHAN GREATERTHAN LESSTHANEQUAL GREATERTHANEQUAL
+%token PLUS MINUS
+%token ASTERISK SLASH PERCENT
+%token UMINUS
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
 %token INT VOID
@@ -15,9 +22,18 @@
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
 
-%nonassoc EQ
-%nonassoc LESSTHAN
-%left PLUS
+
+%nonassoc EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
+ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
+%left RSHIFT LSHIFT BIT_AND BIT_OR BIT_XOR
+%nonassoc BIT_NOT
+%nonassoc NOT
+%left AND OR
+%nonassoc EQUAL NOTEQUAL LESSTHAN GREATERTHAN LESSTHANEQUAL GREATERTHANEQUAL
+%left PLUS MINUS
+%left ASTERISK SLASH PERCENT
+%nonassoc UMINUS
+
 
 %start <Parsetree.top_decl list> file
 
@@ -90,13 +106,56 @@ type_: INT              { Int }
 expr: IDENTIFIER                               { Identifier $1 }
   | literal                                    { Literal $1 }
   | LPAREN expr RPAREN                         { $2 }
-  | IDENTIFIER EQ expr                         { Assignment ($1, $3) }
   | LPAREN expr RPAREN LBRACKET expr RBRACKET  { Index ($2, $5) }
   | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
   | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
   | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
-  | expr PLUS expr                             { BinOp ($1, Plus, $3) }
-  | expr LESSTHAN expr                         { BinOp ($1, LessThan, $3) }
+
+  | IDENTIFIER EQ expr
+    { Assignment ($1, $3) }
+  | IDENTIFIER ADD_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, Plus, $3)) }
+  | IDENTIFIER SUB_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, Minus, $3)) }
+  | IDENTIFIER MUL_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, Times, $3)) }
+  | IDENTIFIER DIV_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, Divide, $3)) }
+  | IDENTIFIER MOD_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, Modulus, $3)) }
+  | IDENTIFIER RSHIFT_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, RShift, $3)) }
+  | IDENTIFIER LSHIFT_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, LShift, $3)) }
+  | IDENTIFIER BIT_AND_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, BitAnd, $3)) }
+  | IDENTIFIER BIT_OR_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, BitOr, $3)) }
+  | IDENTIFIER BIT_XOR_ASSIGN expr
+    { Assignment ($1, BinOp (Identifier $1, BitXor, $3)) }
+
+  | expr PLUS expr             { BinOp ($1, Plus, $3) }
+  | expr MINUS expr            { BinOp ($1, Minus, $3) }
+  | expr ASTERISK expr         { BinOp ($1, Times, $3) }
+  | expr SLASH expr            { BinOp ($1, Divide, $3) }
+  | expr PERCENT expr          { BinOp ($1, Modulus, $3) }
+  | expr EQUAL expr            { BinOp ($1, Equal, $3) }
+  | expr NOTEQUAL expr         { UnOp  (Not, BinOp ($1, Equal, $3)) }
+  | expr LESSTHAN expr         { BinOp ($1, LessThan, $3) }
+  | expr GREATERTHAN expr      { BinOp ($1, GreaterThan, $3) }
+  | expr LESSTHANEQUAL expr    { UnOp  (Not, BinOp ($1, GreaterThan, $3)) }
+  | expr GREATERTHANEQUAL expr { UnOp  (Not, BinOp ($1, LessThan, $3)) }
+  | expr RSHIFT expr           { BinOp ($1, RShift, $3) }
+  | expr LSHIFT expr           { BinOp ($1, LShift, $3) }
+  | expr BIT_AND expr          { BinOp ($1, BitAnd, $3) }
+  | expr BIT_OR expr           { BinOp ($1, BitOr, $3) }
+  | expr BIT_XOR expr          { BinOp ($1, BitXor, $3) }
+  | expr AND expr              { BinOp ($1, And, $3) }
+  | expr OR expr               { BinOp ($1, Or, $3) }
+
+  | MINUS expr %prec UMINUS    { UnOp (UMinus, $2) }
+  | NOT expr                   { UnOp (Not, $2) }
+  | BIT_NOT expr               { UnOp (BitNot, $2) }
 ;
 
 expr_list:               { [] }

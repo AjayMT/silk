@@ -5,10 +5,15 @@
 
 type literal = LInt of int
 
-type op = Plus | LessThan
+type bin_op = Plus | Minus | Times | Divide | Modulus
+              | Equal | LessThan | GreaterThan
+              | And | Or
+              | RShift | LShift | BitAnd | BitOr | BitXor
+type un_op = UMinus | Not | BitNot
 
 type expr = Identifier of string | Literal of literal | Assignment of string * expr
-            | FunctionCall of expr * expr list | BinOp of expr * op * expr
+            | FunctionCall of expr * expr list | BinOp of expr * bin_op * expr
+            | UnOp of un_op * expr
             | Index of expr * expr
 
 type type_ = Int | Void | NewType of string

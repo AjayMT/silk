@@ -12,13 +12,18 @@ type llvm_type = I1 | I8 | I16 | I32 | I64
                  | Void
 
 type ir_literal = Int of int
-type ir_op = Plus | LessThan
+type ir_bin_op = Plus | Minus | Times | Divide | Modulus
+                 | Equal | LessThan | GreaterThan
+                 | And | Or
+                 | RShift | LShift | Xor
+type ir_un_op = UMinus | Not | BitNot
 type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
              | Assignment of llvm_type * string * ir_expr
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
-             | BinOp of llvm_type * ir_op * ir_expr * ir_expr
+             | BinOp of llvm_type * ir_bin_op * ir_expr * ir_expr
+             | UnOp of llvm_type * ir_un_op * ir_expr
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
              | Decl of ir_decl
@@ -43,11 +48,27 @@ type llvm_inst = Alloca of llvm_type
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
                | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
-               | Add of llvm_type * llvm_value * llvm_value
-               | ICmpSlt of llvm_type * llvm_value * llvm_value
                | Label of string
                | BranchCond of llvm_value * string * string
                | Branch of string
+
+               | Add of llvm_type * llvm_value * llvm_value
+               | Sub of llvm_type * llvm_value * llvm_value
+               | Mul of llvm_type * llvm_value * llvm_value
+               | Div of llvm_type * llvm_value * llvm_value
+               | Rem of llvm_type * llvm_value * llvm_value
+
+               | ICmpEq of llvm_type * llvm_value * llvm_value
+               | ICmpSlt of llvm_type * llvm_value * llvm_value
+               | ICmpSgt of llvm_type * llvm_value * llvm_value
+
+               | And of llvm_type * llvm_value * llvm_value
+               | Or of llvm_type * llvm_value * llvm_value
+               | Xor of llvm_type * llvm_value * llvm_value
+
+               | Shl of llvm_type * llvm_value * llvm_value
+               | Shr of llvm_type * llvm_value * llvm_value
+
                | NoInst
 
 
@@ -77,6 +98,7 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | Assignment (t, _, _) -> t
   | FunctionCall (t, _, _, _) -> t
   | BinOp (t, _, _, _) -> t
+  | UnOp (t, _, _) -> t
 
 let construct_ir_tree ast symtab =
   let rec find_in_scope scope_stack symtab_stack name =
@@ -148,9 +170,27 @@ let construct_ir_tree ast symtab =
          | (Ok l, Ok r) ->
             match op_ with
             | Parsetree.Plus -> Ok (BinOp (get_ir_expr_type l, Plus, l, r))
+            | Parsetree.Minus -> Ok (BinOp (get_ir_expr_type l, Minus, l, r))
+            | Parsetree.Times -> Ok (BinOp (get_ir_expr_type l, Times, l, r))
+            | Parsetree.Divide -> Ok (BinOp (get_ir_expr_type l, Divide, l, r))
+            | Parsetree.Modulus -> Ok (BinOp (get_ir_expr_type l, Modulus, l, r))
+
+            | Parsetree.Equal -> Ok (BinOp (get_ir_expr_type l, Equal, l, r))
             | Parsetree.LessThan -> Ok (BinOp (get_ir_expr_type l, LessThan, l, r))
+            | Parsetree.GreaterThan ->
+               Ok (BinOp (get_ir_expr_type l, GreaterThan, l, r))
+
+            | Parsetree.And | Parsetree.BitAnd ->
+               Ok (BinOp (get_ir_expr_type l, And, l, r))
+            | Parsetree.Or | Parsetree.BitOr ->
+               Ok (BinOp (get_ir_expr_type l, Or, l, r))
+            | Parsetree.BitXor -> Ok (BinOp (get_ir_expr_type l, Xor, l, r))
+
+            | Parsetree.LShift -> Ok (BinOp (get_ir_expr_type l, LShift, l, r))
+            | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
        end
     (* TODO *)
+    | Parsetree.UnOp (op, expr) -> map_expr scope_map symtab_stack expr
     | Parsetree.Index (array_exp, _) -> map_expr scope_map symtab_stack
                                           array_exp
   in
@@ -398,7 +438,7 @@ let rec codegen_expr acc expr =
           Ok (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
      end
   | ParamIdentifier (t, name) ->
-     Ok (cont_label, brk_label, tmp_idx, insts, (LNamed name))
+     Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
   | Literal (t, lit) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
   | Assignment (t, name, rexpr) ->
@@ -409,8 +449,7 @@ let rec codegen_expr acc expr =
          Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result))
   | FunctionCall (rt, fexp, ats, args) ->
      Result.bind (codegen_expr acc fexp)
-       begin
-         fun acc ->
+       (fun acc ->
          let (_, _, _, _, f_value) = acc in
          let args_resolved =
            Symtab.fold_left_bind
@@ -426,29 +465,52 @@ let rec codegen_expr acc expr =
              let new_inst = (res, Call (rt, f_value,
                                         List.combine ats (List.rev args_rev))) in
              (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res))
-           args_resolved
-       end
+           args_resolved)
   | BinOp (t, op, l_expr, r_expr) ->
      Result.bind (codegen_expr acc l_expr)
-       begin
-         fun acc ->
+       (fun acc ->
          let (_, _, _, _, l_value) = acc in
          Result.map
            begin
              fun acc ->
              let (cont_label, brk_label, tmp_idx, insts, r_value) = acc in
-             match op with
-             | Plus ->
-                let res = LTemporary tmp_idx in
-                let new_inst = (res, Add (t, l_value, r_value)) in
-                (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
-             | LessThan ->
-                let res = LTemporary tmp_idx in
-                let new_inst = (res, ICmpSlt (t, l_value, r_value)) in
-                (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+             let res = LTemporary tmp_idx in
+
+             let new_inst = match op with
+               | Plus    -> Add (t, l_value, r_value)
+               | Minus   -> Sub (t, l_value, r_value)
+               | Times   -> Mul (t, l_value, r_value)
+               | Divide  -> Div (t, l_value, r_value)
+               | Modulus -> Rem (t, l_value, r_value)
+
+               | Equal       -> ICmpEq  (t, l_value, r_value)
+               | LessThan    -> ICmpSlt (t, l_value, r_value)
+               | GreaterThan -> ICmpSgt (t, l_value, r_value)
+
+               | And -> And (t, l_value, r_value)
+               | Or  -> Or  (t, l_value, r_value)
+               | Xor -> Xor (t, l_value, r_value)
+
+               | LShift -> Shl (t, l_value, r_value)
+               | RShift -> Shr (t, l_value, r_value)
+             in
+
+             (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
            end
-           (codegen_expr acc r_expr)
+           (codegen_expr acc r_expr))
+  | UnOp (t, op, expr) ->
+     Result.map
+       begin
+         fun acc ->
+         let (cont_label, brk_label, tmp_idx, insts, result) = acc in
+         let res = LTemporary tmp_idx in
+         let new_inst = match op with
+           | UMinus -> Sub (t, LLiteral (Int 0), result)
+           | Not | BitNot -> Xor (t, result, LLiteral (Int (-1)))
+         in
+         (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
        end
+       (codegen_expr acc expr)
 
 let rec codegen_stmt acc stmt =
   let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
@@ -644,6 +706,9 @@ let serialize_irt irt_roots =
                            args) in
          String.concat " " ["call"; serialize_type t; serialize_value v;
                             "(" ^ args_s ^ ")"]
+
+      (*TODO*)
+      | _ -> "<coming soon>"
     in
     match value with
     | NoValue -> inst_str inst

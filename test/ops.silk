@@ -1,0 +1,6 @@
+
+func a(a: int): int {
+  var b = 1;
+  b <<= a;
+  return b;
+}

@@ -90,9 +90,33 @@ let rec eval_expr_type symtab_stack expr = match expr with
        | (Error e, _, _) -> Error e
        | (_, _, Error e) -> Error e
        | (Ok Int, Plus, Ok Int) -> Ok Int
+       | (Ok Int, Minus, Ok Int) -> Ok Int
+       | (Ok Int, Times, Ok Int) -> Ok Int
+       | (Ok Int, Divide, Ok Int) -> Ok Int
+       | (Ok Int, Modulus, Ok Int) -> Ok Int
+       | (Ok Int, Equal, Ok Int) -> Ok Bool
        | (Ok Int, LessThan, Ok Int) -> Ok Bool
-       | _ -> Error ("Error: Incorrect types for binary operation")
+       | (Ok Int, GreaterThan, Ok Int) -> Ok Bool
+       | (Ok Bool, And, Ok Bool) -> Ok Bool
+       | (Ok Bool, Or, Ok Bool) -> Ok Bool
+       | (Ok Bool, Equal, Ok Bool) -> Ok Bool
+       | (Ok Int, RShift, Ok Int) -> Ok Int
+       | (Ok Int, LShift, Ok Int) -> Ok Int
+       | (Ok Int, BitAnd, Ok Int) -> Ok Int
+       | (Ok Int, BitOr, Ok Int) -> Ok Int
+       | (Ok Int, BitXor, Ok Int) -> Ok Int
+       | _ -> Error "Error: Incorrect types for binary operation"
      end
+  | Parsetree.UnOp (op, expr) ->
+     Result.bind (eval_expr_type symtab_stack expr)
+       begin
+         fun t ->
+         match (t, op) with
+         | (Int, UMinus) -> Ok Int
+         | (Bool, Not) -> Ok Bool
+         | (Int, BitNot) -> Ok Int
+         | _ -> Error "Error: Incorrect type for unary operation"
+       end
   | Parsetree.Index (array, idx) -> Ok Int
 
 let silktype_of_asttype symtab t = match t with
