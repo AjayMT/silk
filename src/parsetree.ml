@@ -3,7 +3,9 @@
  * Parse tree definitions.
  *)
 
-type literal = LI32 of int | LU32 of int | LBool of bool
+type literal = LI32 of int | LU32 of int
+               | LF64 of float
+               | LBool of bool
 
 type bin_op = Plus | Minus | Times | Divide | Modulus
               | Equal | LessThan | GreaterThan
@@ -16,7 +18,7 @@ type expr = Identifier of string | Literal of literal | Assignment of string * e
             | UnOp of un_op * expr
             | Index of expr * expr
 
-type type_ = I32 | U32 | Void | Bool | NewType of string
+type type_ = I32 | U32 | F64 | Void | Bool | NewType of string
 
 type val_decl = ValI of string * expr | Val of string * type_ * expr
                 | VarI of string * expr | Var of string * type_ * expr

@@ -8,6 +8,7 @@ module SymtabM = Map.Make(String)
 type valness = Val | Var
 
 type silktype = I32 | U32
+                | F64
                 | Bool | Void
                 | Function of (silktype list) * silktype
                 | NewType of string * silktype
@@ -22,6 +23,7 @@ let rec fold_left_bind f acc l = match l with
 let silktype_of_literal_type l = match l with
   | Parsetree.LI32 _ -> I32
   | Parsetree.LU32 _ -> U32
+  | Parsetree.LF64 _ -> F64
   | Parsetree.LBool _ -> Bool
 
 let rec compare_types a b = match (a, b) with
@@ -109,6 +111,15 @@ let rec eval_expr_type symtab_stack expr = match expr with
        | (Ok U32, LessThan, Ok U32) -> Ok Bool
        | (Ok U32, GreaterThan, Ok U32) -> Ok Bool
 
+       | (Ok F64, Plus, Ok F64) -> Ok F64
+       | (Ok F64, Minus, Ok F64) -> Ok F64
+       | (Ok F64, Times, Ok F64) -> Ok F64
+       | (Ok F64, Divide, Ok F64) -> Ok F64
+       | (Ok F64, Modulus, Ok F64) -> Ok F64
+       | (Ok F64, Equal, Ok F64) -> Ok Bool
+       | (Ok F64, LessThan, Ok F64) -> Ok Bool
+       | (Ok F64, GreaterThan, Ok F64) -> Ok Bool
+
        | (Ok Bool, And, Ok Bool) -> Ok Bool
        | (Ok Bool, Or, Ok Bool) -> Ok Bool
        | (Ok Bool, Equal, Ok Bool) -> Ok Bool
@@ -133,6 +144,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
          fun t ->
          match (t, op) with
          | (I32, UMinus) -> Ok I32
+         | (F64, UMinus) -> Ok F64
          | (Bool, Not) -> Ok Bool
          | (I32, BitNot) -> Ok I32
          | (U32, BitNot) -> Ok U32
@@ -143,7 +155,9 @@ let rec eval_expr_type symtab_stack expr = match expr with
 
 let silktype_of_asttype symtab t = match t with
   | Parsetree.I32 -> Ok I32
+  | Parsetree.F64 -> Ok F64
   | Parsetree.U32 -> Ok U32
+  | Parsetree.Bool -> Ok Bool
   | Parsetree.Void -> Ok Void
   | Parsetree.NewType (name) ->
      match SymtabM.find_opt name symtab with

@@ -7,11 +7,12 @@ module ScopeM = Map.Make(String)
 
 type llvm_type = I1 | I8 | I16 | I32 | I64
                  | U1 | U8 | U16 | U32 | U64
+                 | F32 | F64
                  | Pointer of llvm_type
                  | Function of llvm_type list * llvm_type
                  | Void
 
-type ir_literal = Int of int
+type ir_literal = Int of int | Float of float
 type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
@@ -57,10 +58,11 @@ type llvm_inst = Alloca of llvm_type
                | Mul of llvm_type * llvm_value * llvm_value
                | Div of llvm_type * llvm_value * llvm_value
                | Rem of llvm_type * llvm_value * llvm_value
+               | FNeg of llvm_type * llvm_value
 
-               | ICmpEq of llvm_type * llvm_value * llvm_value
-               | ICmpLt of llvm_type * llvm_value * llvm_value
-               | ICmpGt of llvm_type * llvm_value * llvm_value
+               | CmpEq of llvm_type * llvm_value * llvm_value
+               | CmpLt of llvm_type * llvm_value * llvm_value
+               | CmpGt of llvm_type * llvm_value * llvm_value
 
                | And of llvm_type * llvm_value * llvm_value
                | Or of llvm_type * llvm_value * llvm_value
@@ -81,6 +83,7 @@ let rec llvm_type_of_silktype t =
   | Symtab.Bool -> I1
   | Symtab.I32 -> I32
   | Symtab.U32 -> U32
+  | Symtab.F64 -> F64
   | Symtab.Void -> Void
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
@@ -90,6 +93,7 @@ let resolve_literal l = match l with
       match l with
       | Parsetree.LI32 i -> Ok (Int i)
       | Parsetree.LU32 i -> Ok (Int i)
+      | Parsetree.LF64 f -> Ok (Float f)
       | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
     end
   | _ -> Error "Error: Could not resolve static value at compile time"
@@ -139,6 +143,7 @@ let construct_ir_tree ast symtab =
          match l with
          | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
          | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
+         | Parsetree.LF64 f -> Ok (Literal (F64, Float f))
          | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
        end
     | Parsetree.Assignment (name, exp) ->
@@ -504,9 +509,9 @@ let rec codegen_expr acc expr =
                | Divide  -> Div (t, l_value, r_value)
                | Modulus -> Rem (t, l_value, r_value)
 
-               | Equal       -> ICmpEq  (t, l_value, r_value)
-               | LessThan    -> ICmpLt (t, l_value, r_value)
-               | GreaterThan -> ICmpGt (t, l_value, r_value)
+               | Equal       -> CmpEq (t, l_value, r_value)
+               | LessThan    -> CmpLt (t, l_value, r_value)
+               | GreaterThan -> CmpGt (t, l_value, r_value)
 
                | And -> And (t, l_value, r_value)
                | Or  -> Or  (t, l_value, r_value)
@@ -526,7 +531,11 @@ let rec codegen_expr acc expr =
          let (cont_label, brk_label, tmp_idx, insts, result) = acc in
          let res = LTemporary tmp_idx in
          let new_inst = match op with
-           | UMinus -> Sub (t, LLiteral (Int 0), result)
+           | UMinus -> begin
+               match t with
+               | F64 -> FNeg (t, result)
+               | _ -> Sub (t, LLiteral (Int 0), result)
+             end
            | Not -> Xor (t, result, LLiteral (Int (-1)))
          in
          (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
@@ -684,6 +693,7 @@ let rec serialize_type t = match t with
   | Pointer t -> (serialize_type t) ^ "*"
   | I32 -> "i32"
   | U32 -> "u32"
+  | F64 -> "double"
   | I1 -> "i1"
   | Void -> "void"
   (*TODO*)
@@ -691,15 +701,20 @@ let rec serialize_type t = match t with
 
 let serialize_literal l = match l with
   | Int i -> string_of_int i
+  | Float f -> string_of_float f
 
 let serialize_value v = match v with
   | NoValue -> ""
-  | LLiteral (Int i) -> string_of_int i
+  | LLiteral l -> serialize_literal l
   | LNamed name -> name
   | LTemporary i -> "%__tmp." ^ (string_of_int i)
 
 let is_unsigned t = match t with
   | U1 | U8 | U16 | U32 | U64 -> true
+  | _ -> false
+
+let is_float t = match t with
+  | F64 | F32 -> true
   | _ -> false
 
 let serialize_irt irt_roots =
@@ -728,42 +743,56 @@ let serialize_irt irt_roots =
          String.concat " " ["call"; serialize_type t; serialize_value v;
                             "(" ^ args_s ^ ")"]
 
-      | Add (t, v1, v2) -> String.concat " " ["add"; serialize_type t;
-                                              (serialize_value v1) ^ ",";
-                                              serialize_value v2]
-      | Sub (t, v1, v2) -> String.concat " " ["sub"; serialize_type t;
-                                              (serialize_value v1) ^ ",";
-                                              serialize_value v2]
-      | Mul (t, v1, v2) -> String.concat " " ["mul"; serialize_type t;
-                                              (serialize_value v1) ^ ",";
-                                              serialize_value v2]
+      | Add (t, v1, v2) -> String.concat " "
+                             [if is_float t then "fadd" else "add";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
+      | Sub (t, v1, v2) -> String.concat " "
+                             [if is_float t then "fsub" else "sub";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
+      | Mul (t, v1, v2) -> String.concat " "
+                             [if is_float t then "fmul" else "mul";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
       | Div (t, v1, v2) -> String.concat " "
-                             [if is_unsigned t then "udiv" else "sdiv";
+                             [if is_unsigned t then "udiv" else
+                                if is_float t then "fdiv" else "sdiv";
                               serialize_type t;
                               (serialize_value v1) ^ ",";
                               serialize_value v2]
       | Rem (t, v1, v2) -> String.concat " "
-                             [if is_unsigned t then "urem" else "srem";
+                             [if is_unsigned t then "urem" else
+                                if is_float t then "frem" else "srem";
                               serialize_type t;
                               (serialize_value v1) ^ ",";
                               serialize_value v2]
+      | FNeg (t, v) -> String.concat " "
+                         ["fneg"; serialize_type t; serialize_value v]
 
-
-      | ICmpEq (t, v1, v2) -> String.concat " "
-                                ["icmp"; "eq";
-                                 serialize_type t;
-                                 (serialize_value v1) ^ ",";
-                                 serialize_value v2]
-      | ICmpLt (t, v1, v2) -> String.concat " "
-                                ["icmp"; if is_unsigned t then "ult" else "slt";
-                                 serialize_type t;
-                                 (serialize_value v1) ^ ",";
-                                 serialize_value v2]
-      | ICmpGt (t, v1, v2) -> String.concat " "
-                                ["icmp"; if is_unsigned t then "ugt" else "sgt";
-                                 serialize_type t;
-                                 (serialize_value v1) ^ ",";
-                                 serialize_value v2]
+      | CmpEq (t, v1, v2) -> String.concat " "
+                               [if is_float t then "fcmp" else "icmp";
+                                if is_float t then "oeq" else "eq";
+                                serialize_type t;
+                                (serialize_value v1) ^ ",";
+                                serialize_value v2]
+      | CmpLt (t, v1, v2) -> String.concat " "
+                               [if is_float t then "fcmp" else "icmp";
+                                if is_unsigned t then "ult" else
+                                  if is_float t then "olt" else "slt";
+                                serialize_type t;
+                                (serialize_value v1) ^ ",";
+                                serialize_value v2]
+      | CmpGt (t, v1, v2) -> String.concat " "
+                               [if is_float t then "fcmp" else "icmp";
+                                if is_unsigned t then "ugt" else
+                                  if is_float t then "ogt" else "sgt";
+                                serialize_type t;
+                                (serialize_value v1) ^ ",";
+                                serialize_value v2]
 
       | And (t, v1, v2) -> String.concat " " ["and"; serialize_type t;
                                               (serialize_value v1) ^ ",";

@@ -6,6 +6,7 @@
 %token <string> IDENTIFIER
 %token <int> I32_LITERAL
 %token <int> U32_LITERAL
+%token <float> F64_LITERAL
 
 %token EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
 ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
@@ -18,7 +19,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token UMINUS
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
-%token I32 U32 VOID BOOL TRUE FALSE
+%token I32 U32 F64 VOID BOOL TRUE FALSE
 %token TYPE VAL VAR FUNC
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
@@ -100,6 +101,7 @@ block_body: statement    { [$1] }
 
 type_: I32              { I32 }
   | U32                 { U32 }
+  | F64                 { F64 }
   | BOOL                { Bool }
   | VOID                { Void }
   | IDENTIFIER          { NewType $1 }
@@ -168,6 +170,7 @@ expr_list:               { [] }
 
 literal: I32_LITERAL { LI32 $1 }
   | U32_LITERAL      { LU32 $1 }
+  | F64_LITERAL      { LF64 $1 }
   | TRUE             { LBool true }
   | FALSE            { LBool false }
 ;

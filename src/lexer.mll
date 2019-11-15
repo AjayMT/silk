@@ -25,11 +25,16 @@ rule token = parse
 | "return"    { RETURN }
 | "i32"       { I32 }
 | "u32"       { U32 }
+| "f64"       { F64 }
 | "void"      { VOID }
 | "bool"      { BOOL }
 | "true"      { TRUE }
 | "false"     { FALSE }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
+
+| decimalDigit+ "." decimalDigit+ as f64_literal {
+F64_LITERAL (float_of_string f64_literal)
+}
 
 | decimalDigit+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
 | "0x" hexadecimalDigit+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
