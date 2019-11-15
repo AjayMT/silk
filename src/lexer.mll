@@ -23,13 +23,36 @@ rule token = parse
 | "continue"  { CONTINUE }
 | "break"     { BREAK }
 | "return"    { RETURN }
-| "int"       { INT }
+| "i32"       { I32 }
+| "u32"       { U32 }
 | "void"      { VOID }
+| "bool"      { BOOL }
+| "true"      { TRUE }
+| "false"     { FALSE }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
-| decimalDigit+ as int_literal { INT_LITERAL (int_of_string int_literal) }
-| "0x" hexadecimalDigit+ as int_literal { INT_LITERAL (int_of_string int_literal) }
-| "0o" octalDigit+ as int_literal { INT_LITERAL (int_of_string int_literal) }
-| "0b" ['0' '1']+ as int_literal { INT_LITERAL (int_of_string int_literal) }
+
+| decimalDigit+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
+| "0x" hexadecimalDigit+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
+| "0o" octalDigit+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
+| "0b" ['0' '1']+ as i32_literal { I32_LITERAL (int_of_string i32_literal) }
+
+| decimalDigit+ "u" as u32_literal {
+U32_LITERAL (int_of_string
+(String.sub u32_literal 0 ((String.length u32_literal) - 1)))
+}
+| "0x" hexadecimalDigit+ "u" as u32_literal {
+U32_LITERAL (int_of_string
+(String.sub u32_literal 0 ((String.length u32_literal) - 1)))
+}
+| "0o" octalDigit+ "u" as u32_literal {
+U32_LITERAL (int_of_string
+(String.sub u32_literal 0 ((String.length u32_literal) - 1)))
+}
+| "0b" ['0' '1']+ "u" as u32_literal {
+U32_LITERAL (int_of_string
+(String.sub u32_literal 0 ((String.length u32_literal) - 1)))
+}
+
 | ":"         { COLON }
 | ";"         { SEMICOLON }
 | ","         { COMMA }

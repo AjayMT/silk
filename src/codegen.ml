@@ -16,7 +16,7 @@ type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
                  | RShift | LShift | Xor
-type ir_un_op = UMinus | Not | BitNot
+type ir_un_op = UMinus | Not
 type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
@@ -59,8 +59,8 @@ type llvm_inst = Alloca of llvm_type
                | Rem of llvm_type * llvm_value * llvm_value
 
                | ICmpEq of llvm_type * llvm_value * llvm_value
-               | ICmpSlt of llvm_type * llvm_value * llvm_value
-               | ICmpSgt of llvm_type * llvm_value * llvm_value
+               | ICmpLt of llvm_type * llvm_value * llvm_value
+               | ICmpGt of llvm_type * llvm_value * llvm_value
 
                | And of llvm_type * llvm_value * llvm_value
                | Or of llvm_type * llvm_value * llvm_value
@@ -79,7 +79,8 @@ let rec llvm_type_of_silktype t =
      let llrettype = llvm_type_of_silktype rettype in
      Function (llargtypes, llrettype)
   | Symtab.Bool -> I1
-  | Symtab.Int -> I32
+  | Symtab.I32 -> I32
+  | Symtab.U32 -> U32
   | Symtab.Void -> Void
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
@@ -87,7 +88,9 @@ let rec llvm_type_of_silktype t =
 let resolve_literal l = match l with
   | Parsetree.Literal l -> begin
       match l with
-      | Parsetree.LInt i -> Ok (Int i)
+      | Parsetree.LI32 i -> Ok (Int i)
+      | Parsetree.LU32 i -> Ok (Int i)
+      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
     end
   | _ -> Error "Error: Could not resolve static value at compile time"
 
@@ -131,8 +134,13 @@ let construct_ir_tree ast symtab =
             Ok (Identifier (t, ScopeM.find name scope_map))
          | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
-    | Parsetree.Literal (Parsetree.LInt i) ->
-       Ok (Literal (I32, Int i))
+    | Parsetree.Literal l ->
+       begin
+         match l with
+         | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
+         | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
+         | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
+       end
     | Parsetree.Assignment (name, exp) ->
        begin
          let symbol = find_symtab_stack name symtab_stack in
@@ -189,8 +197,18 @@ let construct_ir_tree ast symtab =
             | Parsetree.LShift -> Ok (BinOp (get_ir_expr_type l, LShift, l, r))
             | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
        end
+    | Parsetree.UnOp (op, expr) ->
+       Result.map
+         begin
+           fun ir_expr ->
+           let o = match op with
+             | Parsetree.UMinus -> UMinus
+             | Parsetree.Not | Parsetree.BitNot -> Not
+           in
+           UnOp (get_ir_expr_type ir_expr, o, ir_expr)
+         end (map_expr scope_map symtab_stack expr)
+
     (* TODO *)
-    | Parsetree.UnOp (op, expr) -> map_expr scope_map symtab_stack expr
     | Parsetree.Index (array_exp, _) -> map_expr scope_map symtab_stack
                                           array_exp
   in
@@ -410,6 +428,9 @@ let construct_ir_tree ast symtab =
                           scope_map_ silktyped_args in
                       Result.map
                         (fun ir_stmts ->
+                          let ir_stmts = if rt == Void then
+                                           (Return None) :: ir_stmts
+                                         else ir_stmts in
                           (scope_map,
                            (FuncDecl (rt, resolved_name, args,
                                       ir_stmts @ arg_decl_stmts)) :: decls))
@@ -484,8 +505,8 @@ let rec codegen_expr acc expr =
                | Modulus -> Rem (t, l_value, r_value)
 
                | Equal       -> ICmpEq  (t, l_value, r_value)
-               | LessThan    -> ICmpSlt (t, l_value, r_value)
-               | GreaterThan -> ICmpSgt (t, l_value, r_value)
+               | LessThan    -> ICmpLt (t, l_value, r_value)
+               | GreaterThan -> ICmpGt (t, l_value, r_value)
 
                | And -> And (t, l_value, r_value)
                | Or  -> Or  (t, l_value, r_value)
@@ -506,7 +527,7 @@ let rec codegen_expr acc expr =
          let res = LTemporary tmp_idx in
          let new_inst = match op with
            | UMinus -> Sub (t, LLiteral (Int 0), result)
-           | Not | BitNot -> Xor (t, result, LLiteral (Int (-1)))
+           | Not -> Xor (t, result, LLiteral (Int (-1)))
          in
          (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
        end
@@ -528,7 +549,9 @@ let rec codegen_stmt acc stmt =
   | Expr expr -> codegen_expr acc expr
   | Block (name, stmts) ->
      let new_label = (NoValue, Label name) in
-     let acc = (cont_label, brk_label, tmp_idx, new_label :: insts, last_result) in
+     let block_entry_inst = (NoValue, Branch name) in
+     let acc = (cont_label, brk_label, tmp_idx,
+                new_label :: block_entry_inst :: insts, last_result) in
      let acc_r = Symtab.fold_left_bind codegen_stmt acc stmts in
      Result.map
        (fun acc ->
@@ -660,6 +683,7 @@ let rec codegen_stmt acc stmt =
 let rec serialize_type t = match t with
   | Pointer t -> (serialize_type t) ^ "*"
   | I32 -> "i32"
+  | U32 -> "u32"
   | I1 -> "i1"
   | Void -> "void"
   (*TODO*)
@@ -674,6 +698,9 @@ let serialize_value v = match v with
   | LNamed name -> name
   | LTemporary i -> "%__tmp." ^ (string_of_int i)
 
+let is_unsigned t = match t with
+  | U1 | U8 | U16 | U32 | U64 -> true
+  | _ -> false
 
 let serialize_irt irt_roots =
   let rec serialize_inst = fun (value, inst) ->
@@ -687,12 +714,6 @@ let serialize_irt irt_roots =
                                                      (serialize_value v1) ^ ",";
                                                      serialize_type t2;
                                                      serialize_value v2]
-      | Add (t, v1, v2) -> String.concat " " ["add"; serialize_type t;
-                                              (serialize_value v1) ^ ",";
-                                              serialize_value v2]
-      | ICmpSlt (t, v1, v2) -> String.concat " " ["icmp slt"; serialize_type t;
-                                                  (serialize_value v1) ^ ",";
-                                                  serialize_value v2]
       | Label s -> s ^ ":"
       | Branch l -> "br label %" ^ l
       | BranchCond (v, ifl, elsel) -> "br i1 " ^ (serialize_value v) ^ ", label %"
@@ -707,8 +728,61 @@ let serialize_irt irt_roots =
          String.concat " " ["call"; serialize_type t; serialize_value v;
                             "(" ^ args_s ^ ")"]
 
-      (*TODO*)
-      | _ -> "<coming soon>"
+      | Add (t, v1, v2) -> String.concat " " ["add"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+      | Sub (t, v1, v2) -> String.concat " " ["sub"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+      | Mul (t, v1, v2) -> String.concat " " ["mul"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+      | Div (t, v1, v2) -> String.concat " "
+                             [if is_unsigned t then "udiv" else "sdiv";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
+      | Rem (t, v1, v2) -> String.concat " "
+                             [if is_unsigned t then "urem" else "srem";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
+
+
+      | ICmpEq (t, v1, v2) -> String.concat " "
+                                ["icmp"; "eq";
+                                 serialize_type t;
+                                 (serialize_value v1) ^ ",";
+                                 serialize_value v2]
+      | ICmpLt (t, v1, v2) -> String.concat " "
+                                ["icmp"; if is_unsigned t then "ult" else "slt";
+                                 serialize_type t;
+                                 (serialize_value v1) ^ ",";
+                                 serialize_value v2]
+      | ICmpGt (t, v1, v2) -> String.concat " "
+                                ["icmp"; if is_unsigned t then "ugt" else "sgt";
+                                 serialize_type t;
+                                 (serialize_value v1) ^ ",";
+                                 serialize_value v2]
+
+      | And (t, v1, v2) -> String.concat " " ["and"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+      | Or (t, v1, v2) -> String.concat " " ["or"; serialize_type t;
+                                             (serialize_value v1) ^ ",";
+                                             serialize_value v2]
+      | Xor (t, v1, v2) -> String.concat " " ["xor"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+
+      | Shl (t, v1, v2) -> String.concat " " ["shl"; serialize_type t;
+                                              (serialize_value v1) ^ ",";
+                                              serialize_value v2]
+      | Shr (t, v1, v2) -> String.concat " "
+                             [if is_unsigned t then "lshr" else "ashr";
+                              serialize_type t;
+                              (serialize_value v1) ^ ",";
+                              serialize_value v2]
     in
     match value with
     | NoValue -> inst_str inst

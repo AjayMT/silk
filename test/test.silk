@@ -1,15 +1,15 @@
-type hello = int;
+type hello = i32;
 
-func double(a: int): int {
+func double(a: i32): i32 {
   return a + a;
 }
 
-func add(a: int, b: int): int {
+func add(a: i32, b: i32): i32 {
   return a + b;
 }
 
 val x = 12;
 
-func triple(a: int): int {
+func triple(a: i32): i32 {
   return double(a) + a;
 }

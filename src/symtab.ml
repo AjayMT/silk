@@ -7,7 +7,9 @@ module SymtabM = Map.Make(String)
 
 type valness = Val | Var
 
-type silktype = Int | Bool | Void | Function of (silktype list) * silktype
+type silktype = I32 | U32
+                | Bool | Void
+                | Function of (silktype list) * silktype
                 | NewType of string * silktype
 
 type symbol = Value of valness * silktype * symbol SymtabM.t option
@@ -18,17 +20,17 @@ let rec fold_left_bind f acc l = match l with
   | (x :: xs) -> Result.bind (f acc x) (fun a -> fold_left_bind f a xs)
 
 let silktype_of_literal_type l = match l with
-  | Parsetree.LInt _ -> Int
+  | Parsetree.LI32 _ -> I32
+  | Parsetree.LU32 _ -> U32
+  | Parsetree.LBool _ -> Bool
 
 let rec compare_types a b = match (a, b) with
-  | (Int, Int) -> true
-  | (Void, Void) -> true
   | (Function (aargtypes, arettype), Function (bargtypes, brettype)) ->
      let f b t1 t2 = if b then compare_types t1 t2 else b in
      (List.fold_left2 f true aargtypes bargtypes) && (compare_types arettype brettype)
   | (NewType (aname, atype), NewType (bname, btype)) ->
      (aname == bname) && (compare_types atype btype)
-  | (_, _) -> false
+  | (a, b) -> a == b
 
 let rec find_symtab_stack name ststack  = match ststack with
   | [] -> None
@@ -73,7 +75,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
              end
          in
          if List.length argtypes == List.length args then
-           List.fold_left2 match_types (Ok Int) argtypes exprs
+           List.fold_left2 match_types (Ok Bool) argtypes exprs
          else Error ("Error: Incorrect number of arguments")
        in
        let check_function_type stype = match stype with
@@ -89,22 +91,40 @@ let rec eval_expr_type symtab_stack expr = match expr with
        match (eval_expr_type symtab_stack a, op, eval_expr_type symtab_stack b) with
        | (Error e, _, _) -> Error e
        | (_, _, Error e) -> Error e
-       | (Ok Int, Plus, Ok Int) -> Ok Int
-       | (Ok Int, Minus, Ok Int) -> Ok Int
-       | (Ok Int, Times, Ok Int) -> Ok Int
-       | (Ok Int, Divide, Ok Int) -> Ok Int
-       | (Ok Int, Modulus, Ok Int) -> Ok Int
-       | (Ok Int, Equal, Ok Int) -> Ok Bool
-       | (Ok Int, LessThan, Ok Int) -> Ok Bool
-       | (Ok Int, GreaterThan, Ok Int) -> Ok Bool
+       | (Ok I32, Plus, Ok I32) -> Ok I32
+       | (Ok I32, Minus, Ok I32) -> Ok I32
+       | (Ok I32, Times, Ok I32) -> Ok I32
+       | (Ok I32, Divide, Ok I32) -> Ok I32
+       | (Ok I32, Modulus, Ok I32) -> Ok I32
+       | (Ok I32, Equal, Ok I32) -> Ok Bool
+       | (Ok I32, LessThan, Ok I32) -> Ok Bool
+       | (Ok I32, GreaterThan, Ok I32) -> Ok Bool
+
+       | (Ok U32, Plus, Ok U32) -> Ok U32
+       | (Ok U32, Minus, Ok U32) -> Ok U32
+       | (Ok U32, Times, Ok U32) -> Ok U32
+       | (Ok U32, Divide, Ok U32) -> Ok U32
+       | (Ok U32, Modulus, Ok U32) -> Ok U32
+       | (Ok U32, Equal, Ok U32) -> Ok Bool
+       | (Ok U32, LessThan, Ok U32) -> Ok Bool
+       | (Ok U32, GreaterThan, Ok U32) -> Ok Bool
+
        | (Ok Bool, And, Ok Bool) -> Ok Bool
        | (Ok Bool, Or, Ok Bool) -> Ok Bool
        | (Ok Bool, Equal, Ok Bool) -> Ok Bool
-       | (Ok Int, RShift, Ok Int) -> Ok Int
-       | (Ok Int, LShift, Ok Int) -> Ok Int
-       | (Ok Int, BitAnd, Ok Int) -> Ok Int
-       | (Ok Int, BitOr, Ok Int) -> Ok Int
-       | (Ok Int, BitXor, Ok Int) -> Ok Int
+
+       | (Ok I32, RShift, Ok I32) -> Ok I32
+       | (Ok I32, LShift, Ok I32) -> Ok I32
+       | (Ok I32, BitAnd, Ok I32) -> Ok I32
+       | (Ok I32, BitOr, Ok I32) -> Ok I32
+       | (Ok I32, BitXor, Ok I32) -> Ok I32
+
+       | (Ok U32, RShift, Ok U32) -> Ok U32
+       | (Ok U32, LShift, Ok U32) -> Ok U32
+       | (Ok U32, BitAnd, Ok U32) -> Ok U32
+       | (Ok U32, BitOr, Ok U32) -> Ok U32
+       | (Ok U32, BitXor, Ok U32) -> Ok U32
+
        | _ -> Error "Error: Incorrect types for binary operation"
      end
   | Parsetree.UnOp (op, expr) ->
@@ -112,15 +132,18 @@ let rec eval_expr_type symtab_stack expr = match expr with
        begin
          fun t ->
          match (t, op) with
-         | (Int, UMinus) -> Ok Int
+         | (I32, UMinus) -> Ok I32
          | (Bool, Not) -> Ok Bool
-         | (Int, BitNot) -> Ok Int
+         | (I32, BitNot) -> Ok I32
+         | (U32, BitNot) -> Ok U32
          | _ -> Error "Error: Incorrect type for unary operation"
        end
-  | Parsetree.Index (array, idx) -> Ok Int
+  (* TODO *)
+  | Parsetree.Index (array, idx) -> Ok I32
 
 let silktype_of_asttype symtab t = match t with
-  | Parsetree.Int -> Ok Int
+  | Parsetree.I32 -> Ok I32
+  | Parsetree.U32 -> Ok U32
   | Parsetree.Void -> Ok Void
   | Parsetree.NewType (name) ->
      match SymtabM.find_opt name symtab with
