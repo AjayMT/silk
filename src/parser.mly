@@ -45,8 +45,10 @@ file: EOF                { [] }
   | translation_unit EOF { $1 }
 ;
 
-translation_unit: top_decl    { [$1] }
-  | top_decl translation_unit { $1 :: $2 }
+translation_unit: _translation_unit { List.rev $1 }
+;
+_translation_unit: top_decl         { [$1] }
+  | _translation_unit top_decl      { $2 :: $1 }
 ;
 
 top_decl: type_def { TypeDef $1 }
@@ -65,12 +67,14 @@ val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
 
 func_decl: FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
-compound_statement                             { ($2, $4, $7, $8) }
+compound_statement                              { ($2, $4, $7, $8) }
 ;
 
-argument_list:                                 { [] }
-  | IDENTIFIER COLON type_                     { [($1, $3)] }
-  | IDENTIFIER COLON type_ COMMA argument_list { ($1, $3) :: $5 }
+argument_list: _argument_list                   { List.rev $1 }
+;
+_argument_list:                                 { [] }
+  | IDENTIFIER COLON type_                      { [($1, $3)] }
+  | _argument_list COMMA IDENTIFIER COLON type_ { ($3, $5) :: $1 }
 ;
 
 statement: SEMICOLON              { Empty }
@@ -93,8 +97,10 @@ compound_statement: LCURLY RCURLY { Block ([]) }
   | LCURLY block_body RCURLY      { Block ($2) }
 ;
 
-block_body: statement    { [$1] }
-  | statement block_body { $1 :: $2 }
+block_body: _block_body   { List.rev $1 }
+;
+_block_body: statement    { [$1] }
+  | _block_body statement { $2 :: $1 }
 ;
 
 // == TODO ==
@@ -163,9 +169,11 @@ expr: IDENTIFIER                               { Identifier $1 }
   | BIT_NOT expr               { UnOp (BitNot, $2) }
 ;
 
-expr_list:               { [] }
-  | expr                 { [$1] }
-  | expr COMMA expr_list { $1 :: $3 }
+expr_list: _expr_list     { List.rev $1 }
+;
+_expr_list:               { [] }
+  | expr                  { [$1] }
+  | _expr_list COMMA expr { $3 :: $1 }
 ;
 
 literal: I32_LITERAL { LI32 $1 }
