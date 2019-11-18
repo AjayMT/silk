@@ -277,14 +277,14 @@ let construct_ir_tree ast symtab =
                                  (block_idx + 1, scope_stack, scope_map, symtab_stack,
                                   Block (blk_name block_idx scope_stack, stmts)
                                   :: ir_stmts))
-                               (map_blk blk acc)
+                               (map_blk (List.rev blk) acc)
     | Parsetree.IfElse (cond_expr, ifblock, elseblock) ->
        begin
          match (ifblock, elseblock) with
          | (Parsetree.Block ifstmts, Parsetree.Block elsestmts) ->
             Result.bind (map_expr scope_map symtab_stack cond_expr)
               (fun cond_ir_exp ->
-                Result.bind (map_blk ifstmts acc)
+                Result.bind (map_blk (List.rev ifstmts) acc)
                   (fun if_ir_stmts ->
                     let acc = (block_idx + 1, scope_stack,
                                scope_map, symtab_stack, ir_stmts) in
@@ -296,7 +296,7 @@ let construct_ir_tree ast symtab =
                                                else_ir_stmts) in
                         (block_idx + 2, scope_stack, scope_map, symtab_stack,
                          new_stmt :: ir_stmts))
-                      (map_blk elsestmts acc)))
+                      (map_blk (List.rev elsestmts) acc)))
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.While (cond_expr, whileblock) ->
@@ -311,7 +311,7 @@ let construct_ir_tree ast symtab =
                                           cond_ir_exp, while_ir_stmts) in
                     (block_idx + 1, scope_stack, scope_map,
                      symtab_stack, new_stmt :: ir_stmts))
-                  (map_blk whilestmts acc))
+                  (map_blk (List.rev whilestmts) acc))
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.For (vd, cond_expr, inc_expr, forblock) ->
@@ -347,7 +347,7 @@ let construct_ir_tree ast symtab =
                                                 for_ir_stmts) in
                             (block_idx + 1, scope_stack, scope_map, symtab_stack,
                              new_stmt :: ir_stmts))
-                          (map_blk forstmts acc))))
+                          (map_blk (List.rev forstmts) acc))))
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.Continue ->

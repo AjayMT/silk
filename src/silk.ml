@@ -9,11 +9,9 @@ let _ =
                     (Symtab.construct_symtab ast)
                     (Codegen.construct_ir_tree ast)
     in
-    match ir_tree with
+    let code = Result.bind ir_tree Codegen.serialize_irt in
+    match code with
+    | Ok s -> print_string s
     | Error e -> prerr_string e
-    | Ok irt ->
-       match (Codegen.serialize_irt irt) with
-       | Ok s -> print_string s
-       | Error e -> prerr_string e
   with
   | Lexer.SyntaxError s -> prerr_string ("Syntax Error "  ^ s ^ "\n")

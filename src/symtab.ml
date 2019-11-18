@@ -93,6 +93,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
        match (eval_expr_type symtab_stack a, op, eval_expr_type symtab_stack b) with
        | (Error e, _, _) -> Error e
        | (_, _, Error e) -> Error e
+
        | (Ok I32, Plus, Ok I32) -> Ok I32
        | (Ok I32, Minus, Ok I32) -> Ok I32
        | (Ok I32, Times, Ok I32) -> Ok I32
