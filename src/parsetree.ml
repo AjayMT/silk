@@ -31,6 +31,11 @@ type statement = Empty | Decl of val_decl | Expr of expr | Block of statement li
                  | For of val_decl * expr * expr * statement
                  | Continue | Break | Return of expr option
 
+type func_fwd_decl = string * (string * type_) list * type_ * bool
+
 type func_decl = string * (string * type_) list * type_ * statement
 
-type top_decl = TypeDef of type_def | ValDecl of val_decl | FuncDecl of func_decl
+type top_decl = TypeDef of type_def
+              | ValDecl of val_decl
+              | FuncDecl of func_decl
+              | FuncFwdDecl of func_fwd_decl

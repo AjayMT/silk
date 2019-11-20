@@ -20,7 +20,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
 %token I32 U32 F64 VOID BOOL TRUE FALSE
-%token TYPE VAL VAR FUNC
+%token TYPE VAL VAR FUNC EXTERN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
 
@@ -54,6 +54,7 @@ _translation_unit: top_decl         { [$1] }
 top_decl: type_def { TypeDef $1 }
   | val_decl       { ValDecl $1 }
   | func_decl      { FuncDecl $1 }
+  | func_fwd_decl  { FuncFwdDecl $1 }
 ;
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
@@ -63,6 +64,14 @@ val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
   | VAL IDENTIFIER COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
   | VAR IDENTIFIER EQ expr SEMICOLON             { VarI ($2, $4) }
   | VAR IDENTIFIER COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
+;
+
+func_fwd_decl: FUNC IDENTIFIER
+LPAREN argument_list RPAREN COLON type_
+SEMICOLON                                       { ($2, $4, $7, false) }
+  | EXTERN FUNC IDENTIFIER
+LPAREN argument_list RPAREN COLON type_
+SEMICOLON                                       { ($3, $5, $8, true) }
 ;
 
 func_decl: FUNC IDENTIFIER

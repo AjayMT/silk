@@ -15,6 +15,7 @@ rule token = parse
 | "type"      { TYPE }
 | "val"       { VAL }
 | "var"       { VAR }
+| "extern"    { EXTERN }
 | "func"      { FUNC }
 | "if"        { IF }
 | "else"      { ELSE }

@@ -1,0 +1,7 @@
+
+extern func print_int(i: i32): void;
+
+func main(argc: i32): i32 {
+     print_int(argc);
+     return argc;
+}

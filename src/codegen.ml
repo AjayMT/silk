@@ -39,6 +39,8 @@ type ir_stmt = Empty
 type ir_root = StaticDecl of llvm_type * string * ir_literal
              | FuncDecl of llvm_type * string
                            * (llvm_type * string) list * ir_stmt list
+             | FuncFwdDecl of llvm_type * string
+                              * (llvm_type * string) list * bool
 
 type llvm_value = LTemporary of int
                 | LNamed of string
@@ -399,51 +401,67 @@ let construct_ir_tree ast symtab =
                  (StaticDecl (t, resolved_name, l)) :: decls))
               (resolve_literal expr)
        end
-    | Parsetree.FuncDecl fd ->
+    | Parsetree.FuncDecl (name, args_, _, body) ->
        begin
-         let (name, args_, _, body) = fd in
          let value_ = Symtab.SymtabM.find name symtab in
          match value_ with
          | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
-         | Symtab.Value (_, type_, inner_st) ->
-            match type_ with
-            | Symtab.Function (argtypes, rettype) ->
-               let rt = llvm_type_of_silktype rettype in
-               let silktyped_args = List.map
-                                      (fun ((n, _), t) -> (n, t))
-                                      (List.combine args_ argtypes) in
-               let decl_of_arg = fun (n, t) ->
-                 let lt = llvm_type_of_silktype t in
-                 Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
-               let arg_decl_stmts = List.map decl_of_arg silktyped_args in
-               let args = List.map
-                            (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
-                            silktyped_args
-               in
-               begin
-                 match body with
-                 | Parsetree.Block stmts ->
-                    begin
-                      let resolved_name = "@" ^ name in
-                      let scope_map_ = ScopeM.add name resolved_name scope_map in
-                      let scope_map =
-                        List.fold_left
-                          (fun sm (n, _) ->
-                            ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
-                          scope_map_ silktyped_args in
-                      Result.map
-                        (fun ir_stmts ->
-                          let ir_stmts = if rt == Void then
-                                           (Return None) :: ir_stmts
-                                         else ir_stmts in
-                          (scope_map,
-                           (FuncDecl (rt, resolved_name, args,
-                                      ir_stmts @ arg_decl_stmts)) :: decls))
-                        (map_stmts stmts [name] scope_map [Option.get inner_st])
-                    end
-                 | _ -> Error "Error: Function body is not a block"
-               end
-            | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+         | Symtab.Value (_, Symtab.Function (argtypes, rettype), inner_st) ->
+            let rt = llvm_type_of_silktype rettype in
+            let silktyped_args = List.map
+                                   (fun ((n, _), t) -> (n, t))
+                                   (List.combine args_ argtypes) in
+            let decl_of_arg = fun (n, t) ->
+              let lt = llvm_type_of_silktype t in
+              Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
+            let arg_decl_stmts = List.map decl_of_arg silktyped_args in
+            let args = List.map
+                         (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
+                         silktyped_args in
+            begin
+              match body with
+              | Parsetree.Block stmts ->
+                 begin
+                   let resolved_name = "@" ^ name in
+                   let scope_map_ = ScopeM.add name resolved_name scope_map in
+                   let scope_map =
+                     List.fold_left
+                       (fun sm (n, _) ->
+                         ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
+                       scope_map_ silktyped_args in
+                   Result.map
+                     (fun ir_stmts ->
+                       let ir_stmts = if rt == Void then
+                                        (Return None) :: ir_stmts
+                                      else ir_stmts in
+                       (scope_map_,
+                        (FuncDecl (rt, resolved_name, args,
+                                   ir_stmts @ arg_decl_stmts)) :: decls))
+                     (map_stmts stmts [name] scope_map [Option.get inner_st])
+                 end
+              | _ -> Error "Error: Function body is not a block"
+            end
+         | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+       end
+    | Parsetree.FuncFwdDecl (name, args_, _, extern) ->
+       begin
+         let value_ = Symtab.SymtabM.find name symtab in
+         match value_ with
+         | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+         | Symtab.Value (_, Symtab.Function (argtypes, rettype), _) ->
+            let silktyped_args = List.map
+                                   (fun ((n, _), t) -> (n, t))
+                                   (List.combine args_ argtypes) in
+            let args = List.map
+                         (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
+                         silktyped_args in
+            let resolved_name = "@" ^ name in
+            let scope_map = ScopeM.add name resolved_name scope_map in
+            let rt = llvm_type_of_silktype rettype in
+            Ok (scope_map,
+                (FuncFwdDecl
+                   (rt, resolved_name, args, extern)) :: decls)
+         | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
        end
   in
   Result.map
@@ -487,7 +505,10 @@ let rec codegen_expr acc expr =
          Result.map
            (fun (args_rev, acc) ->
              let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-             let res = LTemporary tmp_idx in
+             let res = match rt with
+               | Void -> NoValue
+               | _ -> LTemporary tmp_idx
+             in
              let new_inst = (res, Call (rt, f_value,
                                         List.combine ats (List.rev args_rev))) in
              (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res))
@@ -839,6 +860,15 @@ let serialize_irt irt_roots =
          (fun (_, _, _, insts, _) ->
            "}" :: ((List.map serialize_inst insts) @ (ns :: str_insts)))
          bstmts
+    | FuncFwdDecl (rt, funcname, args, true) ->
+       let t_str = serialize_type rt in
+       let args_str = String.concat ", "
+                        (List.map
+                           (fun (t, n) -> (serialize_type t) ^ " " ^ n)
+                           args) in
+       let ns = "declare " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ");" in
+       Ok (ns :: str_insts)
+    | FuncFwdDecl (_, _, _, false) -> Ok str_insts
   in
   Result.map (fun l -> String.concat "\n" (List.rev l))
     (Symtab.fold_left_bind serialize_irt [] irt_roots)
