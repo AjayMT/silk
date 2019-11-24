@@ -4,8 +4,15 @@
 %{ open Parsetree %}
 
 %token <string> IDENTIFIER
+%token <int> I8_LITERAL
+%token <int> I16_LITERAL
 %token <int> I32_LITERAL
+%token <int> I64_LITERAL
+%token <int> U8_LITERAL
+%token <int> U16_LITERAL
 %token <int> U32_LITERAL
+%token <int> U64_LITERAL
+%token <float> F32_LITERAL
 %token <float> F64_LITERAL
 
 %token EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
@@ -19,7 +26,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token UMINUS
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
-%token I32 U32 F64 VOID BOOL TRUE FALSE
+%token I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE
 %token TYPE VAL VAR FUNC EXTERN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
@@ -118,8 +125,15 @@ type_: basetype         { $1 }
   | IDENTIFIER          { NewType $1 }
   | LPAREN type_ RPAREN { $2 }
 ;
-basetype: I32           { I32 }
+basetype: I8            { I8 }
+  | I16                 { I16 }
+  | I32                 { I32 }
+  | I64                 { I64 }
+  | U8                  { U8 }
+  | U16                 { U16 }
   | U32                 { U32 }
+  | U64                 { U64 }
+  | F32                 { F32 }
   | F64                 { F64 }
   | BOOL                { Bool }
   | VOID                { Void }
@@ -188,8 +202,15 @@ _expr_list:               { [] }
   | _expr_list COMMA expr { $3 :: $1 }
 ;
 
-literal: I32_LITERAL { LI32 $1 }
+literal: I8_LITERAL  { LI8 $1 }
+  | I16_LITERAL      { LI16 $1 }
+  | I32_LITERAL      { LI32 $1 }
+  | I64_LITERAL      { LI64 $1 }
+  | U8_LITERAL       { LU8 $1 }
+  | U16_LITERAL      { LU16 $1 }
   | U32_LITERAL      { LU32 $1 }
+  | U64_LITERAL      { LU64 $1 }
+  | F32_LITERAL      { LF32 $1 }
   | F64_LITERAL      { LF64 $1 }
   | TRUE             { LBool true }
   | FALSE            { LBool false }

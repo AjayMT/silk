@@ -93,8 +93,15 @@ let rec llvm_type_of_silktype t =
      let llrettype = llvm_type_of_silktype rettype in
      Function (llargtypes, llrettype)
   | Symtab.Bool -> I1
+  | Symtab.I8  -> I8
+  | Symtab.I16 -> I16
   | Symtab.I32 -> I32
+  | Symtab.I64 -> I64
+  | Symtab.U8  -> U8
+  | Symtab.U16 -> U16
   | Symtab.U32 -> U32
+  | Symtab.U64 -> U64
+  | Symtab.F32 -> F32
   | Symtab.F64 -> F64
   | Symtab.Void -> Void
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
@@ -103,8 +110,15 @@ let rec llvm_type_of_silktype t =
 let resolve_literal l = match l with
   | Parsetree.Literal l -> begin
       match l with
+      | Parsetree.LI8  i -> Ok (Int i)
+      | Parsetree.LI16 i -> Ok (Int i)
       | Parsetree.LI32 i -> Ok (Int i)
+      | Parsetree.LI64 i -> Ok (Int i)
+      | Parsetree.LU8  i -> Ok (Int i)
+      | Parsetree.LU16 i -> Ok (Int i)
       | Parsetree.LU32 i -> Ok (Int i)
+      | Parsetree.LU64 i -> Ok (Int i)
+      | Parsetree.LF32 f -> Ok (Float f)
       | Parsetree.LF64 f -> Ok (Float f)
       | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
     end
@@ -156,8 +170,15 @@ let construct_ir_tree ast symtab =
     | Parsetree.Literal l ->
        begin
          match l with
+         | Parsetree.LI8  i -> Ok (Literal (I8, Int i))
+         | Parsetree.LI16 i -> Ok (Literal (I16, Int i))
          | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
+         | Parsetree.LI64 i -> Ok (Literal (I64, Int i))
+         | Parsetree.LU8  i -> Ok (Literal (U8, Int i))
+         | Parsetree.LU16 i -> Ok (Literal (U16, Int i))
          | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
+         | Parsetree.LU64 i -> Ok (Literal (U64, Int i))
+         | Parsetree.LF32 f -> Ok (Literal (F32, Float f))
          | Parsetree.LF64 f -> Ok (Literal (F64, Float f))
          | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
        end
@@ -174,7 +195,7 @@ let construct_ir_tree ast symtab =
        end
     | Parsetree.TypeCast (type_, expr) ->
        let* silktype = Symtab.silktype_of_asttype symtab_stack type_ in
-       let* ir_expr = map_expr scope_map symtab_stack expr in
+       let+ ir_expr = map_expr scope_map symtab_stack expr in
        let casttype = llvm_type_of_silktype silktype in
        let ir_expr_type = get_ir_expr_type ir_expr in
        (* TODO extend, truncate *)
@@ -184,18 +205,18 @@ let construct_ir_tree ast symtab =
             begin
               match ir_expr_type with
               | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
-                 Ok (ItoF (ir_expr_type, ir_expr, casttype))
-              | _ -> Ok (BitCast (ir_expr_type, ir_expr, casttype))
+                 ItoF (ir_expr_type, ir_expr, casttype)
+              | _ -> BitCast (ir_expr_type, ir_expr, casttype)
             end
          | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
             begin
               match ir_expr_type with
               | F32 | F64 ->
-                 Ok (FtoI (ir_expr_type, ir_expr, casttype))
+                 FtoI (ir_expr_type, ir_expr, casttype)
               | _ ->
-                 Ok (BitCast (ir_expr_type, ir_expr, casttype))
+                 BitCast (ir_expr_type, ir_expr, casttype)
             end
-         | _ -> Ok (BitCast (ir_expr_type, ir_expr, casttype))
+         | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        end
     | Parsetree.FunctionCall (fexp, argexps) ->
        let* ir_fexp = map_expr scope_map symtab_stack fexp in

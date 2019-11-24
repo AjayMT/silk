@@ -7,8 +7,9 @@ module SymtabM = Map.Make(String)
 
 type valness = Val | Var
 
-type silktype = I32 | U32
-                | F64
+type silktype = I8 | I16 | I32 | I64
+                | U8 | U16 | U32 | U64
+                | F32 | F64
                 | Bool | Void
                 | Function of (silktype list) * silktype
                 | NewType of string * silktype
@@ -34,15 +35,29 @@ let rec find_symtab_stack name ststack  = match ststack with
      | None -> find_symtab_stack name zs
 
 let silktype_of_literal_type l = match l with
+  | Parsetree.LI8 _  -> I8
+  | Parsetree.LI16 _ -> I16
   | Parsetree.LI32 _ -> I32
+  | Parsetree.LI64 _ -> I64
+  | Parsetree.LU8 _  -> U8
+  | Parsetree.LU16 _ -> U16
   | Parsetree.LU32 _ -> U32
+  | Parsetree.LU64 _ -> U64
+  | Parsetree.LF32 _ -> F32
   | Parsetree.LF64 _ -> F64
   | Parsetree.LBool _ -> Bool
 
 let silktype_of_asttype symtab_stack t = match t with
+  | Parsetree.I8  -> Ok I8
+  | Parsetree.I16 -> Ok I16
   | Parsetree.I32 -> Ok I32
-  | Parsetree.F64 -> Ok F64
+  | Parsetree.I64 -> Ok I64
+  | Parsetree.U8  -> Ok U8
+  | Parsetree.U16 -> Ok U16
   | Parsetree.U32 -> Ok U32
+  | Parsetree.U64 -> Ok U64
+  | Parsetree.F32 -> Ok F32
+  | Parsetree.F64 -> Ok F64
   | Parsetree.Bool -> Ok Bool
   | Parsetree.Void -> Ok Void
   | Parsetree.NewType (name) ->
@@ -60,15 +75,15 @@ let rec compare_types a b = match (a, b) with
      (aname == bname) && (compare_types atype btype)
   | (a, b) -> a == b
 
-let check_viable_cast cast_t expr_t = match (cast_t, expr_t) with
-  | (I32, U32)
-    | (U32, I32)
-    | (I32, F64)
-    | (U32, F64)
-    | (F64, U32)
-    | (F64, I32)-> Ok ()
-  | (a, b) -> if compare_types a b then Ok ()
-              else Error "Error: Unviable type cast."
+let check_viable_cast cast_t expr_t = match cast_t with
+  | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64 ->
+     begin
+       match expr_t with
+       | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64 -> Ok ()
+       | _ -> Error "Error: Unviable type cast"
+     end
+  | _ -> if compare_types cast_t expr_t then Ok ()
+         else Error "Error: Unviable type cast"
 
 let rec eval_expr_type symtab_stack expr = match expr with
   | Parsetree.Identifier name ->
