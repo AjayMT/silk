@@ -1,0 +1,4 @@
+
+func main(argc: u32): i32 {
+  return i32(f64(i32(argc)));
+}

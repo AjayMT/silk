@@ -114,13 +114,15 @@ _block_body: statement    { [$1] }
 
 // == TODO ==
 
-type_: I32              { I32 }
+type_: basetype         { $1 }
+  | IDENTIFIER          { NewType $1 }
+  | LPAREN type_ RPAREN { $2 }
+;
+basetype: I32           { I32 }
   | U32                 { U32 }
   | F64                 { F64 }
   | BOOL                { Bool }
   | VOID                { Void }
-  | IDENTIFIER          { NewType $1 }
-  | LPAREN type_ RPAREN { $2 }
 ;
 
 expr: IDENTIFIER                               { Identifier $1 }
@@ -130,6 +132,7 @@ expr: IDENTIFIER                               { Identifier $1 }
   | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
   | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
   | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
+  | basetype LPAREN expr RPAREN                { TypeCast ($1, $3) }
 
   | IDENTIFIER EQ expr
     { Assignment ($1, $3) }

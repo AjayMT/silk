@@ -25,6 +25,9 @@ type ir_expr = Identifier of llvm_type * string
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
              | BinOp of llvm_type * ir_bin_op * ir_expr * ir_expr
              | UnOp of llvm_type * ir_un_op * ir_expr
+             | ItoF of llvm_type * ir_expr * llvm_type
+             | FtoI of llvm_type * ir_expr * llvm_type
+             | BitCast of llvm_type * ir_expr * llvm_type
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
              | Decl of ir_decl
@@ -73,8 +76,15 @@ type llvm_inst = Alloca of llvm_type
                | Shl of llvm_type * llvm_value * llvm_value
                | Shr of llvm_type * llvm_value * llvm_value
 
+               | ItoFP of llvm_type * llvm_value * llvm_type
+               | FPtoI of llvm_type * llvm_value * llvm_type
+               | BitCast of llvm_type * llvm_value * llvm_type
+
                | NoInst
 
+
+let ( let* ) x f = Result.bind x f
+let ( let+ ) x f = Result.map f x
 
 let rec llvm_type_of_silktype t =
   match t with
@@ -108,6 +118,9 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | FunctionCall (t, _, _, _) -> t
   | BinOp (t, _, _, _) -> t
   | UnOp (t, _, _) -> t
+  | ItoF (_, _, t) -> t
+  | FtoI (_, _, t) -> t
+  | BitCast (_, _, t) -> t
 
 let construct_ir_tree ast symtab =
   let rec find_in_scope scope_stack symtab_stack name =
@@ -155,26 +168,48 @@ let construct_ir_tree ast symtab =
          | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
          | Some (Symtab.Value (_, type_, _)) ->
             let t = llvm_type_of_silktype type_ in
-            Result.map
-              (fun ir_exp -> Assignment (t, ScopeM.find name scope_map, ir_exp))
-              (map_expr scope_map symtab_stack exp)
+            let+ ir_exp = map_expr scope_map symtab_stack exp in
+            Assignment (t, ScopeM.find name scope_map, ir_exp)
          | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
+    | Parsetree.TypeCast (type_, expr) ->
+       let* silktype = Symtab.silktype_of_asttype symtab_stack type_ in
+       let* ir_expr = map_expr scope_map symtab_stack expr in
+       let casttype = llvm_type_of_silktype silktype in
+       let ir_expr_type = get_ir_expr_type ir_expr in
+       (* TODO extend, truncate *)
+       begin
+         match casttype with
+         | F64 | F32 ->
+            begin
+              match ir_expr_type with
+              | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
+                 Ok (ItoF (ir_expr_type, ir_expr, casttype))
+              | _ -> Ok (BitCast (ir_expr_type, ir_expr, casttype))
+            end
+         | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
+            begin
+              match ir_expr_type with
+              | F32 | F64 ->
+                 Ok (FtoI (ir_expr_type, ir_expr, casttype))
+              | _ ->
+                 Ok (BitCast (ir_expr_type, ir_expr, casttype))
+            end
+         | _ -> Ok (BitCast (ir_expr_type, ir_expr, casttype))
+       end
     | Parsetree.FunctionCall (fexp, argexps) ->
-       Result.bind (map_expr scope_map symtab_stack fexp)
-         begin
-           fun ir_fexp ->
-           match (get_ir_expr_type ir_fexp) with
-           | Function (argtypes, rettype) ->
-              let add_arg args ar_exp =
-                Result.map (fun ir_argexp -> ir_argexp :: args)
-                  (map_expr scope_map symtab_stack ar_exp)
-              in
-              Result.map
-                (fun args -> FunctionCall (rettype, ir_fexp, argtypes, args))
-                (Symtab.fold_left_bind add_arg [] argexps)
-           | _ -> Error "Error: Not a function"
-         end
+       let* ir_fexp = map_expr scope_map symtab_stack fexp in
+       begin
+         match (get_ir_expr_type ir_fexp) with
+         | Function (argtypes, rettype) ->
+            let add_arg args ar_exp =
+              let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
+              ir_argexp :: args
+            in
+            let+ args = Symtab.fold_left_bind add_arg [] argexps in
+            FunctionCall (rettype, ir_fexp, argtypes, args)
+         | _ -> Error "Error: Not a function"
+       end
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
        begin
          let lexp = map_expr scope_map symtab_stack lexp_ in
@@ -205,16 +240,12 @@ let construct_ir_tree ast symtab =
             | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
        end
     | Parsetree.UnOp (op, expr) ->
-       Result.map
-         begin
-           fun ir_expr ->
-           let o = match op with
-             | Parsetree.UMinus -> UMinus
-             | Parsetree.Not | Parsetree.BitNot -> Not
-           in
-           UnOp (get_ir_expr_type ir_expr, o, ir_expr)
-         end (map_expr scope_map symtab_stack expr)
-
+       let+ ir_expr = map_expr scope_map symtab_stack expr in
+       let o = match op with
+         | Parsetree.UMinus -> UMinus
+         | Parsetree.Not | Parsetree.BitNot -> Not
+       in
+       UnOp (get_ir_expr_type ir_expr, o, ir_expr)
     (* TODO *)
     | Parsetree.Index (array_exp, _) -> map_expr scope_map symtab_stack
                                           array_exp
@@ -253,67 +284,54 @@ let construct_ir_tree ast symtab =
          let t = llvm_type_of_silktype type_ in
          let prefix = String.concat "." (List.rev scopes) in
          let resolved_name = "%" ^ prefix ^ "." ^ name in
-         Result.map
-           (fun ir_exp -> (t, name, resolved_name, ir_exp))
-           (map_expr scope_map symtab_stack expr)
+         let+ ir_exp = map_expr scope_map symtab_stack expr in
+         (t, name, resolved_name, ir_exp)
     in
 
     let (block_idx, scope_stack, scope_map, symtab_stack, ir_stmts) = acc in
     match stmt with
     | Parsetree.Empty -> Ok acc
     | Parsetree.Decl vd ->
-       Result.map
-         (fun (t, name, resolved_name, exp) ->
-           let new_stmt = Decl (t, resolved_name, exp) in
-           (block_idx, scope_stack, (ScopeM.add name resolved_name scope_map),
-            symtab_stack, new_stmt :: ir_stmts))
-         (map_decl vd acc)
+       let+ (t, name, resolved_name, exp) = map_decl vd acc in
+       let new_stmt = Decl (t, resolved_name, exp) in
+       (block_idx, scope_stack, (ScopeM.add name resolved_name scope_map),
+        symtab_stack, new_stmt :: ir_stmts)
     | Parsetree.Expr expr ->
-       Result.map
-         (fun ir_exp ->
-           (block_idx, scope_stack, scope_map,
-            symtab_stack, (Expr ir_exp) :: ir_stmts))
-         (map_expr scope_map symtab_stack expr)
-    | Parsetree.Block blk -> Result.map
-                               (fun stmts ->
-                                 (block_idx + 1, scope_stack, scope_map, symtab_stack,
-                                  Block (blk_name block_idx scope_stack, stmts)
-                                  :: ir_stmts))
-                               (map_blk (List.rev blk) acc)
+       let+ ir_exp = map_expr scope_map symtab_stack expr in
+       (block_idx, scope_stack, scope_map,
+        symtab_stack, (Expr ir_exp) :: ir_stmts)
+    | Parsetree.Block blk ->
+       let+ stmts = map_blk (List.rev blk) acc in
+       (block_idx + 1, scope_stack, scope_map, symtab_stack,
+        Block (blk_name block_idx scope_stack, stmts)
+        :: ir_stmts)
     | Parsetree.IfElse (cond_expr, ifblock, elseblock) ->
        begin
          match (ifblock, elseblock) with
          | (Parsetree.Block ifstmts, Parsetree.Block elsestmts) ->
-            Result.bind (map_expr scope_map symtab_stack cond_expr)
-              (fun cond_ir_exp ->
-                Result.bind (map_blk (List.rev ifstmts) acc)
-                  (fun if_ir_stmts ->
-                    let acc = (block_idx + 1, scope_stack,
-                               scope_map, symtab_stack, ir_stmts) in
-                    Result.map
-                      (fun else_ir_stmts ->
-                        let new_stmt = IfElse (blk_name block_idx scope_stack,
-                                               blk_name (block_idx + 1) scope_stack,
-                                               cond_ir_exp, if_ir_stmts,
-                                               else_ir_stmts) in
-                        (block_idx + 2, scope_stack, scope_map, symtab_stack,
-                         new_stmt :: ir_stmts))
-                      (map_blk (List.rev elsestmts) acc)))
+            let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
+            let* if_ir_stmts = map_blk (List.rev ifstmts) acc in
+            let acc = (block_idx + 1, scope_stack,
+                       scope_map, symtab_stack, ir_stmts) in
+            let+ else_ir_stmts = map_blk (List.rev elsestmts) acc in
+            let new_stmt = IfElse (blk_name block_idx scope_stack,
+                                   blk_name (block_idx + 1) scope_stack,
+                                   cond_ir_exp, if_ir_stmts,
+                                   else_ir_stmts) in
+            (block_idx + 2, scope_stack, scope_map, symtab_stack,
+             new_stmt :: ir_stmts)
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.While (cond_expr, whileblock) ->
        begin
          match whileblock with
          | Parsetree.Block whilestmts ->
-            Result.bind (map_expr scope_map symtab_stack cond_expr)
-              (fun cond_ir_exp ->
-                Result.map
-                  (fun while_ir_stmts ->
-                    let new_stmt = While (blk_name block_idx scope_stack,
-                                          cond_ir_exp, while_ir_stmts) in
-                    (block_idx + 1, scope_stack, scope_map,
-                     symtab_stack, new_stmt :: ir_stmts))
-                  (map_blk (List.rev whilestmts) acc))
+            let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
+            let+ while_ir_stmts = map_blk (List.rev whilestmts) acc in
+            let new_stmt = While (blk_name block_idx scope_stack,
+                                  cond_ir_exp, while_ir_stmts) in
+            (block_idx + 1, scope_stack, scope_map,
+             symtab_stack, new_stmt :: ir_stmts)
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.For (vd, cond_expr, inc_expr, forblock) ->
@@ -330,26 +348,21 @@ let construct_ir_tree ast symtab =
             let new_scope_stack = (string_of_int block_idx) :: scope_stack in
             let new_acc = (block_idx, new_scope_stack, scope_map, new_symtab_stack,
                            ir_stmts) in
-            Result.bind (map_decl vd new_acc)
-              (fun (t, name, resolved_name, exp) ->
-                let (block_idx, scope_stack, scope_map,
-                     symtab_stack, ir_stmts) = acc in
-                let scope_map = ScopeM.add name resolved_name scope_map in
-                let acc = (block_idx, scope_stack, scope_map,
-                           symtab_stack, ir_stmts) in
-                Result.bind (map_expr scope_map new_symtab_stack cond_expr)
-                  (fun cond_ir_exp ->
-                    Result.bind (map_expr scope_map new_symtab_stack inc_expr)
-                      (fun inc_ir_exp ->
-                        Result.map
-                          (fun for_ir_stmts ->
-                            let new_stmt = For (blk_name block_idx scope_stack,
-                                                (t, resolved_name, exp),
-                                                cond_ir_exp, inc_ir_exp,
-                                                for_ir_stmts) in
-                            (block_idx + 1, scope_stack, scope_map, symtab_stack,
-                             new_stmt :: ir_stmts))
-                          (map_blk (List.rev forstmts) acc))))
+            let* (t, name, resolved_name, exp) = map_decl vd new_acc in
+            let (block_idx, scope_stack, scope_map,
+                 symtab_stack, ir_stmts) = acc in
+            let scope_map = ScopeM.add name resolved_name scope_map in
+            let acc = (block_idx, scope_stack, scope_map,
+                       symtab_stack, ir_stmts) in
+            let* cond_ir_exp = map_expr scope_map new_symtab_stack cond_expr in
+            let* inc_ir_exp = map_expr scope_map new_symtab_stack inc_expr in
+            let+ for_ir_stmts = map_blk (List.rev forstmts) acc in
+            let new_stmt = For (blk_name block_idx scope_stack,
+                                (t, resolved_name, exp),
+                                cond_ir_exp, inc_ir_exp,
+                                for_ir_stmts) in
+            (block_idx + 1, scope_stack, scope_map, symtab_stack,
+             new_stmt :: ir_stmts)
          | _ -> Error "Error: Not a block"
        end
     | Parsetree.Continue ->
@@ -367,15 +380,15 @@ let construct_ir_tree ast symtab =
          | Some (Ok ret_expr) -> Ok (Return (Some ret_expr))
          | None -> Ok (Return None)
        in
-       Result.map
-         (fun new_stmt ->
-           (block_idx, scope_stack, scope_map, symtab_stack, new_stmt :: ir_stmts))
-         new_stmt_res
+       let+ new_stmt = new_stmt_res in
+       (block_idx, scope_stack, scope_map, symtab_stack, new_stmt :: ir_stmts)
 
   and map_stmts stmts scope_stack scope_map symtab_stack =
-    Result.map (fun (_, _, _, _, ir_stmts) -> ir_stmts)
-      (Symtab.fold_left_bind map_stmt (0, scope_stack, scope_map,
-                                       symtab_stack, []) stmts)
+    let+ (_, _, _, _, ir_stmts) =
+      Symtab.fold_left_bind map_stmt (0, scope_stack, scope_map,
+                                      symtab_stack, []) stmts
+    in
+    ir_stmts
   in
 
   let map_top_decl acc td =
@@ -395,11 +408,9 @@ let construct_ir_tree ast symtab =
          | Symtab.Value (_, type_, _) ->
             let t = llvm_type_of_silktype type_ in
             let resolved_name = "@" ^ name in
-            Result.map
-              (fun l ->
-                (ScopeM.add name resolved_name scope_map,
-                 (StaticDecl (t, resolved_name, l)) :: decls))
-              (resolve_literal expr)
+            let+ l = resolve_literal expr in
+            (ScopeM.add name resolved_name scope_map,
+             (StaticDecl (t, resolved_name, l)) :: decls)
        end
     | Parsetree.FuncDecl (name, args_, _, body) ->
        begin
@@ -429,15 +440,17 @@ let construct_ir_tree ast symtab =
                        (fun sm (n, _) ->
                          ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
                        scope_map_ silktyped_args in
-                   Result.map
-                     (fun ir_stmts ->
-                       let ir_stmts = if rt == Void then
-                                        (Return None) :: ir_stmts
-                                      else ir_stmts in
-                       (scope_map_,
-                        (FuncDecl (rt, resolved_name, args,
-                                   ir_stmts @ arg_decl_stmts)) :: decls))
-                     (map_stmts stmts [name] scope_map [Option.get inner_st])
+                   let+ ir_stmts =
+                     map_stmts stmts [name] scope_map [Option.get inner_st]
+                   in
+                   let ir_stmts =
+                     if rt == Void then
+                       (Return None) :: ir_stmts
+                     else ir_stmts
+                   in
+                   (scope_map_,
+                    (FuncDecl (rt, resolved_name, args,
+                               ir_stmts @ arg_decl_stmts)) :: decls)
                  end
               | _ -> Error "Error: Function body is not a block"
             end
@@ -464,9 +477,8 @@ let construct_ir_tree ast symtab =
          | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
        end
   in
-  Result.map
-    (fun (_, l) -> List.rev l)
-    (Symtab.fold_left_bind map_top_decl (ScopeM.empty, []) ast)
+  let+ (_, l) = Symtab.fold_left_bind map_top_decl (ScopeM.empty, []) ast in
+  List.rev l
 
 let rec codegen_expr acc expr =
   let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
@@ -486,137 +498,141 @@ let rec codegen_expr acc expr =
   | Literal (t, lit) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
   | Assignment (t, name, rexpr) ->
-     Result.bind (codegen_expr acc rexpr)
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let new_inst = (NoValue, Store (t, last_result, Pointer t, LNamed name)) in
-         Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result))
+     let* (cont_label, brk_label, tmp_idx, insts, last_result) =
+       codegen_expr acc rexpr
+     in
+     let new_inst = (NoValue, Store (t, last_result, Pointer t, LNamed name)) in
+     Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result)
   | FunctionCall (rt, fexp, ats, args) ->
-     Result.bind (codegen_expr acc fexp)
-       (fun acc ->
-         let (_, _, _, _, f_value) = acc in
-         let args_resolved =
-           Symtab.fold_left_bind
-             (fun (args, acc) arg_expr ->
-               Result.map (fun acc ->
-                   let (_, _, _, _, arg_value) = acc in (arg_value :: args, acc))
-                 (codegen_expr acc arg_expr))
-             ([], acc) args in
-         Result.map
-           (fun (args_rev, acc) ->
-             let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-             let res = match rt with
-               | Void -> NoValue
-               | _ -> LTemporary tmp_idx
-             in
-             let new_inst = (res, Call (rt, f_value,
-                                        List.combine ats (List.rev args_rev))) in
-             (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res))
-           args_resolved)
+     let* acc = codegen_expr acc fexp in
+     let (_, _, _, _, f_value) = acc in
+     let+ (args_rev, acc) =
+       Symtab.fold_left_bind
+         (fun (args, acc) arg_expr ->
+           let+ acc = codegen_expr acc arg_expr in
+           let (_, _, _, _, arg_value) = acc in
+           (arg_value :: args, acc))
+         ([], acc) args
+     in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let res = match rt with
+       | Void -> NoValue
+       | _ -> LTemporary tmp_idx
+     in
+     let new_inst = (res, Call (rt, f_value,
+                                List.combine ats (List.rev args_rev))) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | ItoF (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, ItoFP (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | FtoI (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, FPtoI (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | BitCast (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, BitCast (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+
   | BinOp (t, op, l_expr, r_expr) ->
-     Result.bind (codegen_expr acc l_expr)
-       (fun acc ->
-         let (_, _, _, _, l_value) = acc in
-         Result.map
-           begin
-             fun acc ->
-             let (cont_label, brk_label, tmp_idx, insts, r_value) = acc in
-             let res = LTemporary tmp_idx in
+     let* acc = codegen_expr acc l_expr in
+     let (_, _, _, _, l_value) = acc in
+     let+ acc = codegen_expr acc r_expr in
+     let (cont_label, brk_label, tmp_idx, insts, r_value) = acc in
+     let res = LTemporary tmp_idx in
 
-             let new_inst = match op with
-               | Plus    -> Add (t, l_value, r_value)
-               | Minus   -> Sub (t, l_value, r_value)
-               | Times   -> Mul (t, l_value, r_value)
-               | Divide  -> Div (t, l_value, r_value)
-               | Modulus -> Rem (t, l_value, r_value)
+     let new_inst = match op with
+       | Plus    -> Add (t, l_value, r_value)
+       | Minus   -> Sub (t, l_value, r_value)
+       | Times   -> Mul (t, l_value, r_value)
+       | Divide  -> Div (t, l_value, r_value)
+       | Modulus -> Rem (t, l_value, r_value)
 
-               | Equal       -> CmpEq (t, l_value, r_value)
-               | LessThan    -> CmpLt (t, l_value, r_value)
-               | GreaterThan -> CmpGt (t, l_value, r_value)
+       | Equal       -> CmpEq (t, l_value, r_value)
+       | LessThan    -> CmpLt (t, l_value, r_value)
+       | GreaterThan -> CmpGt (t, l_value, r_value)
 
-               | And -> And (t, l_value, r_value)
-               | Or  -> Or  (t, l_value, r_value)
-               | Xor -> Xor (t, l_value, r_value)
+       | And -> And (t, l_value, r_value)
+       | Or  -> Or  (t, l_value, r_value)
+       | Xor -> Xor (t, l_value, r_value)
 
-               | LShift -> Shl (t, l_value, r_value)
-               | RShift -> Shr (t, l_value, r_value)
-             in
+       | LShift -> Shl (t, l_value, r_value)
+       | RShift -> Shr (t, l_value, r_value)
+     in
 
-             (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
-           end
-           (codegen_expr acc r_expr))
+     (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
   | UnOp (t, op, expr) ->
-     Result.map
-       begin
-         fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, result) = acc in
-         let res = LTemporary tmp_idx in
-         let new_inst = match op with
-           | UMinus -> begin
-               match t with
-               | F64 -> FNeg (t, result)
-               | _ -> Sub (t, LLiteral (Int 0), result)
-             end
-           | Not -> Xor (t, result, LLiteral (Int (-1)))
-         in
-         (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
-       end
-       (codegen_expr acc expr)
+     let+ acc = codegen_expr acc expr in
+     let (cont_label, brk_label, tmp_idx, insts, result) = acc in
+     let res = LTemporary tmp_idx in
+     let new_inst = match op with
+       | UMinus -> begin
+           match t with
+           | F64 -> FNeg (t, result)
+           | _ -> Sub (t, LLiteral (Int 0), result)
+         end
+       | Not -> Xor (t, result, LLiteral (Int (-1)))
+     in
+     (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
 
 let rec codegen_stmt acc stmt =
   let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
   match stmt with
   | Empty -> Ok acc
   | Decl (t, name, expr) ->
-     Result.bind (codegen_expr acc expr)
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let res = LNamed name in
-         let alloca_inst = (LNamed name, Alloca t) in
-         let store_inst = (NoValue, Store (t, last_result, Pointer t, res)) in
-         Ok (cont_label, brk_label, tmp_idx,
-             store_inst :: alloca_inst :: insts, NoValue))
+     let+ acc = codegen_expr acc expr in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let res = LNamed name in
+     let alloca_inst = (LNamed name, Alloca t) in
+     let store_inst = (NoValue, Store (t, last_result, Pointer t, res)) in
+     (cont_label, brk_label, tmp_idx,
+      store_inst :: alloca_inst :: insts, NoValue)
   | Expr expr -> codegen_expr acc expr
   | Block (name, stmts) ->
      let new_label = (NoValue, Label name) in
      let block_entry_inst = (NoValue, Branch name) in
      let acc = (cont_label, brk_label, tmp_idx,
                 new_label :: block_entry_inst :: insts, last_result) in
-     let acc_r = Symtab.fold_left_bind codegen_stmt acc stmts in
-     Result.map
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let end_label = name ^ "_end" in
-         let branch_inst = (NoValue, Branch end_label) in
-         let end_inst = (NoValue, Label end_label) in
-         (cont_label, brk_label, tmp_idx,
-          end_inst :: branch_inst :: insts, last_result))
-       acc_r
+     let+ acc = Symtab.fold_left_bind codegen_stmt acc stmts in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let end_label = name ^ "_end" in
+     let branch_inst = (NoValue, Branch end_label) in
+     let end_inst = (NoValue, Label end_label) in
+     (cont_label, brk_label, tmp_idx,
+      end_inst :: branch_inst :: insts, last_result)
   | IfElse (if_label, else_label, cond_expr, if_stmts, else_stmts) ->
-     Result.bind (codegen_expr acc cond_expr)
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let branch_inst = (NoValue,
-                            BranchCond (last_result, if_label, else_label)) in
-         let if_label_inst = (NoValue, Label if_label) in
-         let ifelse_end_label = if_label ^ "_end" in
-         let ifelse_end_label_inst = (NoValue, Label ifelse_end_label) in
-         let if_end_branch_inst = (NoValue, Branch ifelse_end_label) in
-         let else_label_inst = (NoValue, Label else_label) in
-         let else_end_branch_inst = (NoValue, Branch ifelse_end_label) in
-         let acc = (cont_label, brk_label, tmp_idx,
-                    if_label_inst :: branch_inst :: insts, NoValue) in
-         Result.bind (Symtab.fold_left_bind codegen_stmt acc if_stmts)
-           (fun acc ->
-             let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-             let acc = (cont_label, brk_label, tmp_idx,
-                        else_label_inst :: if_end_branch_inst :: insts, NoValue) in
-             Result.map
-               (fun acc ->
-                 let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-                 (cont_label, brk_label, tmp_idx,
-                  ifelse_end_label_inst :: else_end_branch_inst :: insts, NoValue))
-               (Symtab.fold_left_bind codegen_stmt acc else_stmts)))
+     let* acc = codegen_expr acc cond_expr in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let branch_inst =
+       (NoValue,
+        BranchCond (last_result, if_label, else_label))
+     in
+     let if_label_inst = (NoValue, Label if_label) in
+     let ifelse_end_label = if_label ^ "_end" in
+     let ifelse_end_label_inst = (NoValue, Label ifelse_end_label) in
+     let if_end_branch_inst = (NoValue, Branch ifelse_end_label) in
+     let else_label_inst = (NoValue, Label else_label) in
+     let else_end_branch_inst = (NoValue, Branch ifelse_end_label) in
+     let acc = (cont_label, brk_label, tmp_idx,
+                if_label_inst :: branch_inst :: insts, NoValue) in
+     let* acc = Symtab.fold_left_bind codegen_stmt acc if_stmts in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let acc = (cont_label, brk_label, tmp_idx,
+                else_label_inst :: if_end_branch_inst :: insts, NoValue) in
+     let+ acc = Symtab.fold_left_bind codegen_stmt acc else_stmts in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     (cont_label, brk_label, tmp_idx,
+      ifelse_end_label_inst :: else_end_branch_inst :: insts, NoValue)
   | While (while_label, cond_expr, while_stmts) ->
      let while_label_inst = (NoValue, Label while_label) in
      let while_end_label = while_label ^ "_end" in
@@ -626,59 +642,57 @@ let rec codegen_stmt acc stmt =
      let branch_inst = (NoValue, Branch while_cond_label) in
      let acc = (Some while_cond_label, Some while_end_label, tmp_idx,
                 while_label_inst :: branch_inst :: insts, NoValue) in
-     Result.bind (Symtab.fold_left_bind codegen_stmt acc while_stmts)
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, _) = acc in
-         let branch_into_cond_inst = (NoValue, Branch while_cond_label) in
-         let acc = (cont_label, brk_label, tmp_idx,
-                    while_cond_label_inst :: branch_into_cond_inst :: insts, NoValue)
-         in
-         Result.map
-           (fun acc ->
-             let (_, _, tmp_idx, insts, last_result) = acc in
-             let branch_cond_inst =
-               (NoValue,
-                BranchCond (last_result, while_label, while_end_label)) in
-             (None, None, tmp_idx,
-              while_end_label_inst :: branch_cond_inst :: insts, NoValue))
-           (codegen_expr acc cond_expr))
+     let* acc = Symtab.fold_left_bind codegen_stmt acc while_stmts in
+     let (cont_label, brk_label, tmp_idx, insts, _) = acc in
+     let branch_into_cond_inst = (NoValue, Branch while_cond_label) in
+     let acc =
+       (cont_label, brk_label, tmp_idx,
+        while_cond_label_inst :: branch_into_cond_inst :: insts, NoValue)
+     in
+     let+ acc = codegen_expr acc cond_expr in
+     let (_, _, tmp_idx, insts, last_result) = acc in
+     let branch_cond_inst =
+       (NoValue,
+        BranchCond (last_result, while_label, while_end_label))
+     in
+     (None, None, tmp_idx,
+      while_end_label_inst :: branch_cond_inst :: insts, NoValue)
   | For (for_label, decl, cond_expr, inc_expr, for_stmts) ->
-     Result.bind (codegen_stmt acc (Decl decl))
-       (fun acc ->
-         let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-         let for_label_inst = (NoValue, Label for_label) in
-         let for_end_label = for_label ^ "_end" in
-         let for_end_label_inst = (NoValue, Label for_end_label) in
-         let for_body_label = for_label ^ "_body" in
-         let for_body_label_inst = (NoValue, Label for_body_label) in
-         let for_inc_label = for_label ^ "_inc" in
-         let for_inc_label_inst = (NoValue, Label for_inc_label) in
-         let branch_into_for_inst = (NoValue, Branch for_label) in
-         let acc = (Some for_inc_label, Some for_end_label, tmp_idx,
-                    for_label_inst :: branch_into_for_inst :: insts, NoValue) in
-         Result.bind (codegen_expr acc cond_expr)
-           (fun acc ->
-             let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-             let branch_cond_inst =
-               (NoValue,
-                BranchCond (last_result, for_body_label, for_end_label)) in
-             let acc = (cont_label, brk_label, tmp_idx,
-                        for_body_label_inst :: branch_cond_inst :: insts, NoValue) in
-             Result.bind (Symtab.fold_left_bind codegen_stmt acc for_stmts)
-               (fun acc ->
-                 let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-                 let branch_into_inc_inst = (NoValue, Branch for_inc_label) in
-                 let acc = (cont_label, brk_label, tmp_idx,
-                            for_inc_label_inst :: branch_into_inc_inst :: insts,
-                            NoValue) in
-                 Result.map
-                   (fun acc ->
-                     let (_, _, tmp_idx, insts, _) = acc in
-                     let branch_back_cond_inst = (NoValue, Branch for_label) in
-                     (None, None, tmp_idx,
-                      for_end_label_inst :: branch_back_cond_inst :: insts,
-                      NoValue))
-                   (codegen_expr acc inc_expr))))
+     let* acc = codegen_stmt acc (Decl decl) in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let for_label_inst = (NoValue, Label for_label) in
+     let for_end_label = for_label ^ "_end" in
+     let for_end_label_inst = (NoValue, Label for_end_label) in
+     let for_body_label = for_label ^ "_body" in
+     let for_body_label_inst = (NoValue, Label for_body_label) in
+     let for_inc_label = for_label ^ "_inc" in
+     let for_inc_label_inst = (NoValue, Label for_inc_label) in
+     let branch_into_for_inst = (NoValue, Branch for_label) in
+     let acc =
+       (Some for_inc_label, Some for_end_label, tmp_idx,
+        for_label_inst :: branch_into_for_inst :: insts, NoValue)
+     in
+     let* acc = codegen_expr acc cond_expr in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let branch_cond_inst =
+       (NoValue,
+        BranchCond (last_result, for_body_label, for_end_label)) in
+     let acc = (cont_label, brk_label, tmp_idx,
+                for_body_label_inst :: branch_cond_inst :: insts, NoValue) in
+     let* acc = Symtab.fold_left_bind codegen_stmt acc for_stmts in
+     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let branch_into_inc_inst = (NoValue, Branch for_inc_label) in
+     let acc =
+       (cont_label, brk_label, tmp_idx,
+        for_inc_label_inst :: branch_into_inc_inst :: insts,
+        NoValue)
+     in
+     let+ acc = codegen_expr acc inc_expr in
+     let (_, _, tmp_idx, insts, _) = acc in
+     let branch_back_cond_inst = (NoValue, Branch for_label) in
+     (None, None, tmp_idx,
+      for_end_label_inst :: branch_back_cond_inst :: insts,
+      NoValue)
   | Continue ->
      begin
        match cont_label with
@@ -702,23 +716,30 @@ let rec codegen_stmt acc stmt =
           let ret_inst = (NoValue, Ret (Void, NoValue)) in
           Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
        | Some exp ->
-          Result.map
-            (fun acc ->
-              let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-              let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
-              (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue))
-            (codegen_expr acc exp)
+          let+ acc = codegen_expr acc exp in
+          let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+          let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
+          (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
      end
 
 let rec serialize_type t = match t with
   | Pointer t -> (serialize_type t) ^ "*"
-  | I32 -> "i32"
-  | U32 -> "u32"
-  | F64 -> "double"
-  | I1 -> "i1"
   | Void -> "void"
-  (*TODO*)
-  | _ -> "<type>"
+
+  (* The Function type is actually a function pointer. *)
+  | Function (ats, rt) ->
+     (serialize_type rt) ^ "(" ^
+       (String.concat ", " (List.map serialize_type ats)) ^
+         ")*"
+
+  | I1  | U1  -> "i1"
+  | I8  | U8  -> "i8"
+  | I16 | U16 -> "i16"
+  | I32 | U32 -> "i32"
+  | I64 | U64 -> "i64"
+  | F32 -> "float"
+  | F64 -> "double"
+
 
 let serialize_literal l = match l with
   | Int i -> string_of_int i
@@ -833,6 +854,28 @@ let serialize_irt irt_roots =
                               serialize_type t;
                               (serialize_value v1) ^ ",";
                               serialize_value v2]
+
+      | ItoFP (at, v, bt) ->
+         String.concat " "
+           [if is_unsigned at then "uitofp" else "sitofp";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
+      | FPtoI (at, v, bt) ->
+         String.concat " "
+           [if is_unsigned bt then "fptoui" else "fptosi";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
+      | BitCast (at, v, bt) ->
+         String.concat " "
+           ["bitcast";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
     in
     match value with
     | NoValue -> inst_str inst
@@ -853,13 +896,11 @@ let serialize_irt irt_roots =
                            (fun (t, n) -> (serialize_type t) ^ " " ^ n)
                            args) in
        let ns = "define " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
-       let bstmts =
+       let+ (_, _, _, insts, _) =
          Symtab.fold_left_bind
-           codegen_stmt (None, None, 0, [], NoValue) (List.rev body) in
-       Result.map
-         (fun (_, _, _, insts, _) ->
-           "}" :: ((List.map serialize_inst insts) @ (ns :: str_insts)))
-         bstmts
+           codegen_stmt (None, None, 0, [], NoValue) (List.rev body)
+       in
+       "}" :: ((List.map serialize_inst insts) @ (ns :: str_insts))
     | FuncFwdDecl (rt, funcname, args, true) ->
        let t_str = serialize_type rt in
        let args_str = String.concat ", "
@@ -870,6 +911,5 @@ let serialize_irt irt_roots =
        Ok (ns :: str_insts)
     | FuncFwdDecl (_, _, _, false) -> Ok str_insts
   in
-  Result.map (fun l -> String.concat "\n" (List.rev l))
-    (Symtab.fold_left_bind serialize_irt [] irt_roots)
-
+  let+ l = Symtab.fold_left_bind serialize_irt [] irt_roots in
+  String.concat "\n" (List.rev l)

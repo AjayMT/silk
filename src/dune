@@ -4,4 +4,5 @@
 (executable
  (name silk)
  (modules lexer parser parsetree symtab codegen silk)
- (libraries llvm))
+ (libraries llvm)
+ (preprocess future_syntax))

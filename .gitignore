@@ -2,4 +2,5 @@
 /silk
 /_build
 *.llvm
-*.llvm.s
+*.s
+*.o
