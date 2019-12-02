@@ -24,6 +24,7 @@ rule token = parse
 | "continue"  { CONTINUE }
 | "break"     { BREAK }
 | "return"    { RETURN }
+| "mut"       { MUT }
 | "i8"        { I8 }
 | "i16"       { I16 }
 | "i32"       { I32 }
@@ -175,6 +176,7 @@ U64_LITERAL (int_of_string
 | ":"         { COLON }
 | ";"         { SEMICOLON }
 | ","         { COMMA }
+| "@"         { DEREF }
 | ">>"        { RSHIFT }
 | "<<"        { LSHIFT }
 | "&"         { BIT_AND }

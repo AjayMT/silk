@@ -17,7 +17,7 @@ type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
                  | RShift | LShift | Xor
-type ir_un_op = UMinus | Not
+type ir_un_op = UMinus | Not | AddressOf | Deref
 type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
@@ -104,24 +104,26 @@ let rec llvm_type_of_silktype t =
   | Symtab.F32 -> F32
   | Symtab.F64 -> F64
   | Symtab.Void -> Void
+  | Symtab.Pointer t -> Pointer (llvm_type_of_silktype t)
+  | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
 (* TODO binops, other things *)
 let resolve_literal l = match l with
-  | Parsetree.Literal l -> begin
-      match l with
-      | Parsetree.LI8  i -> Ok (Int i)
-      | Parsetree.LI16 i -> Ok (Int i)
-      | Parsetree.LI32 i -> Ok (Int i)
-      | Parsetree.LI64 i -> Ok (Int i)
-      | Parsetree.LU8  i -> Ok (Int i)
-      | Parsetree.LU16 i -> Ok (Int i)
-      | Parsetree.LU32 i -> Ok (Int i)
-      | Parsetree.LU64 i -> Ok (Int i)
-      | Parsetree.LF32 f -> Ok (Float f)
-      | Parsetree.LF64 f -> Ok (Float f)
-      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
-    end
+  | Parsetree.Literal l ->
+     begin match l with
+     | Parsetree.LI8  i -> Ok (Int i)
+     | Parsetree.LI16 i -> Ok (Int i)
+     | Parsetree.LI32 i -> Ok (Int i)
+     | Parsetree.LI64 i -> Ok (Int i)
+     | Parsetree.LU8  i -> Ok (Int i)
+     | Parsetree.LU16 i -> Ok (Int i)
+     | Parsetree.LU32 i -> Ok (Int i)
+     | Parsetree.LU64 i -> Ok (Int i)
+     | Parsetree.LF32 f -> Ok (Float f)
+     | Parsetree.LF64 f -> Ok (Float f)
+     | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
+     end
   | _ -> Error "Error: Could not resolve static value at compile time"
 
 let get_ir_expr_type ir_exp = match ir_exp with
@@ -158,40 +160,37 @@ let construct_ir_tree ast symtab =
   let rec map_expr scope_map symtab_stack expr =
     match expr with
     | Parsetree.Identifier name ->
-       begin
-         let symbol = find_symtab_stack name symtab_stack in
-         match symbol with
-         | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
-         | Some (Symtab.Value (_, type_, _)) ->
-            let t = llvm_type_of_silktype type_ in
-            Ok (Identifier (t, ScopeM.find name scope_map))
-         | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+       let symbol = find_symtab_stack name symtab_stack in
+       begin match symbol with
+       | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
+       | Some (Symtab.Value (_, type_, _)) ->
+          let t = llvm_type_of_silktype type_ in
+          Ok (Identifier (t, ScopeM.find name scope_map))
+       | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
     | Parsetree.Literal l ->
-       begin
-         match l with
-         | Parsetree.LI8  i -> Ok (Literal (I8, Int i))
-         | Parsetree.LI16 i -> Ok (Literal (I16, Int i))
-         | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
-         | Parsetree.LI64 i -> Ok (Literal (I64, Int i))
-         | Parsetree.LU8  i -> Ok (Literal (U8, Int i))
-         | Parsetree.LU16 i -> Ok (Literal (U16, Int i))
-         | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
-         | Parsetree.LU64 i -> Ok (Literal (U64, Int i))
-         | Parsetree.LF32 f -> Ok (Literal (F32, Float f))
-         | Parsetree.LF64 f -> Ok (Literal (F64, Float f))
-         | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
+       begin match l with
+       | Parsetree.LI8  i -> Ok (Literal (I8, Int i))
+       | Parsetree.LI16 i -> Ok (Literal (I16, Int i))
+       | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
+       | Parsetree.LI64 i -> Ok (Literal (I64, Int i))
+       | Parsetree.LU8  i -> Ok (Literal (U8, Int i))
+       | Parsetree.LU16 i -> Ok (Literal (U16, Int i))
+       | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
+       | Parsetree.LU64 i -> Ok (Literal (U64, Int i))
+       | Parsetree.LF32 f -> Ok (Literal (F32, Float f))
+       | Parsetree.LF64 f -> Ok (Literal (F64, Float f))
+       | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
        end
     | Parsetree.Assignment (name, exp) ->
-       begin
-         let symbol = find_symtab_stack name symtab_stack in
-         match symbol with
-         | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
-         | Some (Symtab.Value (_, type_, _)) ->
-            let t = llvm_type_of_silktype type_ in
-            let+ ir_exp = map_expr scope_map symtab_stack exp in
-            Assignment (t, ScopeM.find name scope_map, ir_exp)
-         | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+       let symbol = find_symtab_stack name symtab_stack in
+       begin match symbol with
+       | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
+       | Some (Symtab.Value (_, type_, _)) ->
+          let t = llvm_type_of_silktype type_ in
+          let+ ir_exp = map_expr scope_map symtab_stack exp in
+          Assignment (t, ScopeM.find name scope_map, ir_exp)
+       | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
     | Parsetree.TypeCast (type_, expr) ->
        let* silktype = Symtab.silktype_of_asttype symtab_stack type_ in
@@ -199,72 +198,69 @@ let construct_ir_tree ast symtab =
        let casttype = llvm_type_of_silktype silktype in
        let ir_expr_type = get_ir_expr_type ir_expr in
        (* TODO extend, truncate *)
-       begin
-         match casttype with
-         | F64 | F32 ->
-            begin
-              match ir_expr_type with
-              | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
-                 ItoF (ir_expr_type, ir_expr, casttype)
-              | _ -> BitCast (ir_expr_type, ir_expr, casttype)
-            end
-         | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
-            begin
-              match ir_expr_type with
-              | F32 | F64 ->
-                 FtoI (ir_expr_type, ir_expr, casttype)
-              | _ ->
-                 BitCast (ir_expr_type, ir_expr, casttype)
-            end
-         | _ -> BitCast (ir_expr_type, ir_expr, casttype)
+       begin match casttype with
+       | F64 | F32 ->
+          begin match ir_expr_type with
+          | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
+             ItoF (ir_expr_type, ir_expr, casttype)
+          | _ -> BitCast (ir_expr_type, ir_expr, casttype)
+          end
+       | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
+          begin match ir_expr_type with
+          | F32 | F64 ->
+             FtoI (ir_expr_type, ir_expr, casttype)
+          | _ ->
+             BitCast (ir_expr_type, ir_expr, casttype)
+          end
+       | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        end
     | Parsetree.FunctionCall (fexp, argexps) ->
        let* ir_fexp = map_expr scope_map symtab_stack fexp in
-       begin
-         match (get_ir_expr_type ir_fexp) with
-         | Function (argtypes, rettype) ->
-            let add_arg args ar_exp =
-              let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
-              ir_argexp :: args
-            in
-            let+ args = Symtab.fold_left_bind add_arg [] argexps in
-            FunctionCall (rettype, ir_fexp, argtypes, args)
-         | _ -> Error "Error: Not a function"
+       begin match (get_ir_expr_type ir_fexp) with
+       | Function (argtypes, rettype) ->
+          let add_arg args ar_exp =
+            let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
+            ir_argexp :: args
+          in
+          let+ args = Symtab.fold_left_bind add_arg [] argexps in
+          FunctionCall (rettype, ir_fexp, argtypes, args)
+       | _ -> Error "Error: Not a function"
        end
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
-       begin
-         let lexp = map_expr scope_map symtab_stack lexp_ in
-         let rexp = map_expr scope_map symtab_stack rexp_ in
-         match (lexp, rexp) with
-         | (Error e, _) -> Error e
-         | (_, Error e) -> Error e
-         | (Ok l, Ok r) ->
-            match op_ with
-            | Parsetree.Plus -> Ok (BinOp (get_ir_expr_type l, Plus, l, r))
-            | Parsetree.Minus -> Ok (BinOp (get_ir_expr_type l, Minus, l, r))
-            | Parsetree.Times -> Ok (BinOp (get_ir_expr_type l, Times, l, r))
-            | Parsetree.Divide -> Ok (BinOp (get_ir_expr_type l, Divide, l, r))
-            | Parsetree.Modulus -> Ok (BinOp (get_ir_expr_type l, Modulus, l, r))
+       let lexp = map_expr scope_map symtab_stack lexp_ in
+       let rexp = map_expr scope_map symtab_stack rexp_ in
+       begin match (lexp, rexp) with
+       | (Error e, _) -> Error e
+       | (_, Error e) -> Error e
+       | (Ok l, Ok r) ->
+          match op_ with
+          | Parsetree.Plus -> Ok (BinOp (get_ir_expr_type l, Plus, l, r))
+          | Parsetree.Minus -> Ok (BinOp (get_ir_expr_type l, Minus, l, r))
+          | Parsetree.Times -> Ok (BinOp (get_ir_expr_type l, Times, l, r))
+          | Parsetree.Divide -> Ok (BinOp (get_ir_expr_type l, Divide, l, r))
+          | Parsetree.Modulus -> Ok (BinOp (get_ir_expr_type l, Modulus, l, r))
 
-            | Parsetree.Equal -> Ok (BinOp (get_ir_expr_type l, Equal, l, r))
-            | Parsetree.LessThan -> Ok (BinOp (get_ir_expr_type l, LessThan, l, r))
-            | Parsetree.GreaterThan ->
-               Ok (BinOp (get_ir_expr_type l, GreaterThan, l, r))
+          | Parsetree.Equal -> Ok (BinOp (get_ir_expr_type l, Equal, l, r))
+          | Parsetree.LessThan -> Ok (BinOp (get_ir_expr_type l, LessThan, l, r))
+          | Parsetree.GreaterThan ->
+             Ok (BinOp (get_ir_expr_type l, GreaterThan, l, r))
 
-            | Parsetree.And | Parsetree.BitAnd ->
-               Ok (BinOp (get_ir_expr_type l, And, l, r))
-            | Parsetree.Or | Parsetree.BitOr ->
-               Ok (BinOp (get_ir_expr_type l, Or, l, r))
-            | Parsetree.BitXor -> Ok (BinOp (get_ir_expr_type l, Xor, l, r))
+          | Parsetree.And | Parsetree.BitAnd ->
+             Ok (BinOp (get_ir_expr_type l, And, l, r))
+          | Parsetree.Or | Parsetree.BitOr ->
+             Ok (BinOp (get_ir_expr_type l, Or, l, r))
+          | Parsetree.BitXor -> Ok (BinOp (get_ir_expr_type l, Xor, l, r))
 
-            | Parsetree.LShift -> Ok (BinOp (get_ir_expr_type l, LShift, l, r))
-            | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
+          | Parsetree.LShift -> Ok (BinOp (get_ir_expr_type l, LShift, l, r))
+          | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
        end
     | Parsetree.UnOp (op, expr) ->
        let+ ir_expr = map_expr scope_map symtab_stack expr in
        let o = match op with
          | Parsetree.UMinus -> UMinus
          | Parsetree.Not | Parsetree.BitNot -> Not
+         | Parsetree.Deref -> Deref
+         | Parsetree.AddressOf -> AddressOf
        in
        UnOp (get_ir_expr_type ir_expr, o, ir_expr)
     (* TODO *)
@@ -327,64 +323,61 @@ let construct_ir_tree ast symtab =
         Block (blk_name block_idx scope_stack, stmts)
         :: ir_stmts)
     | Parsetree.IfElse (cond_expr, ifblock, elseblock) ->
-       begin
-         match (ifblock, elseblock) with
-         | (Parsetree.Block ifstmts, Parsetree.Block elsestmts) ->
-            let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
-            let* if_ir_stmts = map_blk (List.rev ifstmts) acc in
-            let acc = (block_idx + 1, scope_stack,
-                       scope_map, symtab_stack, ir_stmts) in
-            let+ else_ir_stmts = map_blk (List.rev elsestmts) acc in
-            let new_stmt = IfElse (blk_name block_idx scope_stack,
-                                   blk_name (block_idx + 1) scope_stack,
-                                   cond_ir_exp, if_ir_stmts,
-                                   else_ir_stmts) in
-            (block_idx + 2, scope_stack, scope_map, symtab_stack,
-             new_stmt :: ir_stmts)
-         | _ -> Error "Error: Not a block"
+       begin match (ifblock, elseblock) with
+       | (Parsetree.Block ifstmts, Parsetree.Block elsestmts) ->
+          let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
+          let* if_ir_stmts = map_blk (List.rev ifstmts) acc in
+          let acc = (block_idx + 1, scope_stack,
+                     scope_map, symtab_stack, ir_stmts) in
+          let+ else_ir_stmts = map_blk (List.rev elsestmts) acc in
+          let new_stmt = IfElse (blk_name block_idx scope_stack,
+                                 blk_name (block_idx + 1) scope_stack,
+                                 cond_ir_exp, if_ir_stmts,
+                                 else_ir_stmts) in
+          (block_idx + 2, scope_stack, scope_map, symtab_stack,
+           new_stmt :: ir_stmts)
+       | _ -> Error "Error: Not a block"
        end
     | Parsetree.While (cond_expr, whileblock) ->
-       begin
-         match whileblock with
-         | Parsetree.Block whilestmts ->
-            let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
-            let+ while_ir_stmts = map_blk (List.rev whilestmts) acc in
-            let new_stmt = While (blk_name block_idx scope_stack,
-                                  cond_ir_exp, while_ir_stmts) in
-            (block_idx + 1, scope_stack, scope_map,
-             symtab_stack, new_stmt :: ir_stmts)
-         | _ -> Error "Error: Not a block"
+       begin match whileblock with
+       | Parsetree.Block whilestmts ->
+          let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
+          let+ while_ir_stmts = map_blk (List.rev whilestmts) acc in
+          let new_stmt = While (blk_name block_idx scope_stack,
+                                cond_ir_exp, while_ir_stmts) in
+          (block_idx + 1, scope_stack, scope_map,
+           symtab_stack, new_stmt :: ir_stmts)
+       | _ -> Error "Error: Not a block"
        end
     | Parsetree.For (vd, cond_expr, inc_expr, forblock) ->
-       begin
-         match forblock with
-         | Parsetree.Block forstmts ->
-            let new_symtab = match Symtab.SymtabM.find
-                                     (string_of_int block_idx)
-                                     (List.hd symtab_stack) with
-              | Symtab.Value (_, _, Some new_symtab) -> new_symtab
-              | _ -> Symtab.SymtabM.empty
-            in
-            let new_symtab_stack = new_symtab :: symtab_stack in
-            let new_scope_stack = (string_of_int block_idx) :: scope_stack in
-            let new_acc = (block_idx, new_scope_stack, scope_map, new_symtab_stack,
-                           ir_stmts) in
-            let* (t, name, resolved_name, exp) = map_decl vd new_acc in
-            let (block_idx, scope_stack, scope_map,
-                 symtab_stack, ir_stmts) = acc in
-            let scope_map = ScopeM.add name resolved_name scope_map in
-            let acc = (block_idx, scope_stack, scope_map,
-                       symtab_stack, ir_stmts) in
-            let* cond_ir_exp = map_expr scope_map new_symtab_stack cond_expr in
-            let* inc_ir_exp = map_expr scope_map new_symtab_stack inc_expr in
-            let+ for_ir_stmts = map_blk (List.rev forstmts) acc in
-            let new_stmt = For (blk_name block_idx scope_stack,
-                                (t, resolved_name, exp),
-                                cond_ir_exp, inc_ir_exp,
-                                for_ir_stmts) in
-            (block_idx + 1, scope_stack, scope_map, symtab_stack,
-             new_stmt :: ir_stmts)
-         | _ -> Error "Error: Not a block"
+       begin match forblock with
+       | Parsetree.Block forstmts ->
+          let new_symtab = match Symtab.SymtabM.find
+                                   (string_of_int block_idx)
+                                   (List.hd symtab_stack) with
+            | Symtab.Value (_, _, Some new_symtab) -> new_symtab
+            | _ -> Symtab.SymtabM.empty
+          in
+          let new_symtab_stack = new_symtab :: symtab_stack in
+          let new_scope_stack = (string_of_int block_idx) :: scope_stack in
+          let new_acc = (block_idx, new_scope_stack, scope_map, new_symtab_stack,
+                         ir_stmts) in
+          let* (t, name, resolved_name, exp) = map_decl vd new_acc in
+          let (block_idx, scope_stack, scope_map,
+               symtab_stack, ir_stmts) = acc in
+          let scope_map = ScopeM.add name resolved_name scope_map in
+          let acc = (block_idx, scope_stack, scope_map,
+                     symtab_stack, ir_stmts) in
+          let* cond_ir_exp = map_expr scope_map new_symtab_stack cond_expr in
+          let* inc_ir_exp = map_expr scope_map new_symtab_stack inc_expr in
+          let+ for_ir_stmts = map_blk (List.rev forstmts) acc in
+          let new_stmt = For (blk_name block_idx scope_stack,
+                              (t, resolved_name, exp),
+                              cond_ir_exp, inc_ir_exp,
+                              for_ir_stmts) in
+          (block_idx + 1, scope_stack, scope_map, symtab_stack,
+           new_stmt :: ir_stmts)
+       | _ -> Error "Error: Not a block"
        end
     | Parsetree.Continue ->
        Ok (block_idx, scope_stack, scope_map, symtab_stack, Continue :: ir_stmts)
@@ -417,85 +410,79 @@ let construct_ir_tree ast symtab =
     match td with
     | Parsetree.TypeDef _ -> Ok acc
     | Parsetree.ValDecl vd ->
-       begin
-         let (name, expr) = match vd with
-           | Parsetree.ValI (n, e)    -> (n, e)
-           | Parsetree.Val  (n, _, e) -> (n, e)
-           | Parsetree.VarI (n, e)    -> (n, e)
-           | Parsetree.Var  (n, _, e) -> (n, e)
-         in
-         match (Symtab.SymtabM.find name symtab) with
-         | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
-         | Symtab.Value (_, type_, _) ->
-            let t = llvm_type_of_silktype type_ in
-            let resolved_name = "@" ^ name in
-            let+ l = resolve_literal expr in
-            (ScopeM.add name resolved_name scope_map,
-             (StaticDecl (t, resolved_name, l)) :: decls)
+       let (name, expr) = match vd with
+         | Parsetree.ValI (n, e)    -> (n, e)
+         | Parsetree.Val  (n, _, e) -> (n, e)
+         | Parsetree.VarI (n, e)    -> (n, e)
+         | Parsetree.Var  (n, _, e) -> (n, e)
+       in
+       begin match (Symtab.SymtabM.find name symtab) with
+       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Value (_, type_, _) ->
+          let t = llvm_type_of_silktype type_ in
+          let resolved_name = "@" ^ name in
+          let+ l = resolve_literal expr in
+          (ScopeM.add name resolved_name scope_map,
+           (StaticDecl (t, resolved_name, l)) :: decls)
        end
     | Parsetree.FuncDecl (name, args_, _, body) ->
-       begin
-         let value_ = Symtab.SymtabM.find name symtab in
-         match value_ with
-         | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
-         | Symtab.Value (_, Symtab.Function (argtypes, rettype), inner_st) ->
-            let rt = llvm_type_of_silktype rettype in
-            let silktyped_args = List.map
-                                   (fun ((n, _), t) -> (n, t))
-                                   (List.combine args_ argtypes) in
-            let decl_of_arg = fun (n, t) ->
-              let lt = llvm_type_of_silktype t in
-              Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
-            let arg_decl_stmts = List.map decl_of_arg silktyped_args in
-            let args = List.map
-                         (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
-                         silktyped_args in
-            begin
-              match body with
-              | Parsetree.Block stmts ->
-                 begin
-                   let resolved_name = "@" ^ name in
-                   let scope_map_ = ScopeM.add name resolved_name scope_map in
-                   let scope_map =
-                     List.fold_left
-                       (fun sm (n, _) ->
-                         ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
-                       scope_map_ silktyped_args in
-                   let+ ir_stmts =
-                     map_stmts stmts [name] scope_map [Option.get inner_st]
-                   in
-                   let ir_stmts =
-                     if rt == Void then
-                       (Return None) :: ir_stmts
-                     else ir_stmts
-                   in
-                   (scope_map_,
-                    (FuncDecl (rt, resolved_name, args,
-                               ir_stmts @ arg_decl_stmts)) :: decls)
-                 end
-              | _ -> Error "Error: Function body is not a block"
-            end
-         | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+       let value_ = Symtab.SymtabM.find name symtab in
+       begin match value_ with
+       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Value (_, Symtab.Function (argtypes, rettype), inner_st) ->
+          let rt = llvm_type_of_silktype rettype in
+          let silktyped_args = List.map
+                                 (fun ((n, _), t) -> (n, t))
+                                 (List.combine args_ argtypes) in
+          let decl_of_arg = fun (n, t) ->
+            let lt = llvm_type_of_silktype t in
+            Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
+          let arg_decl_stmts = List.map decl_of_arg silktyped_args in
+          let args = List.map
+                       (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
+                       silktyped_args in
+          begin match body with
+          | Parsetree.Block stmts ->
+             let resolved_name = "@" ^ name in
+             let scope_map_ = ScopeM.add name resolved_name scope_map in
+             let scope_map =
+               List.fold_left
+                 (fun sm (n, _) ->
+                   ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
+                 scope_map_ silktyped_args in
+             let+ ir_stmts =
+               map_stmts stmts [name] scope_map [Option.get inner_st]
+             in
+             let ir_stmts =
+               if rt == Void then
+                 (Return None) :: ir_stmts
+               else ir_stmts
+             in
+             (scope_map_,
+              (FuncDecl (rt, resolved_name, args,
+                         ir_stmts @ arg_decl_stmts)) :: decls)
+          | _ -> Error "Error: Function body is not a block"
+          end
+       | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
        end
     | Parsetree.FuncFwdDecl (name, args_, _, extern) ->
-       begin
-         let value_ = Symtab.SymtabM.find name symtab in
-         match value_ with
-         | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
-         | Symtab.Value (_, Symtab.Function (argtypes, rettype), _) ->
-            let silktyped_args = List.map
-                                   (fun ((n, _), t) -> (n, t))
-                                   (List.combine args_ argtypes) in
-            let args = List.map
-                         (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
-                         silktyped_args in
-            let resolved_name = "@" ^ name in
-            let scope_map = ScopeM.add name resolved_name scope_map in
-            let rt = llvm_type_of_silktype rettype in
-            Ok (scope_map,
-                (FuncFwdDecl
-                   (rt, resolved_name, args, extern)) :: decls)
-         | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+       let value_ = Symtab.SymtabM.find name symtab in
+       begin match value_ with
+       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Value (_, Symtab.Function (argtypes, rettype), _) ->
+          let silktyped_args = List.map
+                                 (fun ((n, _), t) -> (n, t))
+                                 (List.combine args_ argtypes) in
+          let args = List.map
+                       (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
+                       silktyped_args in
+          let resolved_name = "@" ^ name in
+          let scope_map = ScopeM.add name resolved_name scope_map in
+          let rt = llvm_type_of_silktype rettype in
+          Ok (scope_map,
+              (FuncFwdDecl
+                 (rt, resolved_name, args, extern)) :: decls)
+       | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
        end
   in
   let+ (_, l) = Symtab.fold_left_bind map_top_decl (ScopeM.empty, []) ast in
@@ -505,14 +492,13 @@ let rec codegen_expr acc expr =
   let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
   match expr with
   | Identifier (t, name) ->
-     begin
-       match t with
-       | Function (_, _) ->
-          Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
-       | _ ->
-          let res = LTemporary tmp_idx in
-          let new_inst = (res, Load (t, Pointer t, LNamed name)) in
-          Ok (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     begin match t with
+     | Function (_, _) ->
+        Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
+     | _ ->
+        let res = LTemporary tmp_idx in
+        let new_inst = (res, Load (t, Pointer t, LNamed name)) in
+        Ok (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
      end
   | ParamIdentifier (t, name) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
@@ -593,18 +579,32 @@ let rec codegen_expr acc expr =
 
      (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
   | UnOp (t, op, expr) ->
-     let+ acc = codegen_expr acc expr in
-     let (cont_label, brk_label, tmp_idx, insts, result) = acc in
-     let res = LTemporary tmp_idx in
-     let new_inst = match op with
-       | UMinus -> begin
-           match t with
-           | F64 -> FNeg (t, result)
-           | _ -> Sub (t, LLiteral (Int 0), result)
-         end
-       | Not -> Xor (t, result, LLiteral (Int (-1)))
-     in
-     (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
+     match op with
+     | AddressOf ->
+        begin match expr with
+        | Identifier (_, name) ->
+           Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
+        | _ -> Error "Error: Invalid operand type for 'address' operator"
+        end
+     | _ ->
+        let+ acc = codegen_expr acc expr in
+        let (cont_label, brk_label, tmp_idx, insts, result) = acc in
+        let res = LTemporary tmp_idx in
+        let new_inst = match op with
+          | UMinus ->
+             begin match t with
+             | F64 -> FNeg (t, result)
+             | _ -> Sub (t, LLiteral (Int 0), result)
+             end
+          | Not -> Xor (t, result, LLiteral (Int (-1)))
+          | Deref ->
+             begin match t with
+             | Pointer t -> Load (t, Pointer t, result)
+             | _ -> NoInst
+             end
+          | _ -> NoInst
+        in
+        (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
 
 let rec codegen_stmt acc stmt =
   let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
@@ -715,32 +715,29 @@ let rec codegen_stmt acc stmt =
       for_end_label_inst :: branch_back_cond_inst :: insts,
       NoValue)
   | Continue ->
-     begin
-       match cont_label with
-       | None -> Error "Error: Invalid 'continue'"
-       | Some label ->
-          let branch_inst = (NoValue, Branch label) in
-          Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+     begin match cont_label with
+     | None -> Error "Error: Invalid 'continue'"
+     | Some label ->
+        let branch_inst = (NoValue, Branch label) in
+        Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
      end
   | Break ->
-     begin
-       match brk_label with
-       | None -> Error "Error: Invalid 'break'"
-       | Some label ->
-          let branch_inst = (NoValue, Branch label) in
-          Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+     begin match brk_label with
+     | None -> Error "Error: Invalid 'break'"
+     | Some label ->
+        let branch_inst = (NoValue, Branch label) in
+        Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
      end
   | Return (exp_opt) ->
-     begin
-       match exp_opt with
-       | None ->
-          let ret_inst = (NoValue, Ret (Void, NoValue)) in
-          Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
-       | Some exp ->
-          let+ acc = codegen_expr acc exp in
-          let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-          let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
-          (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
+     begin match exp_opt with
+     | None ->
+        let ret_inst = (NoValue, Ret (Void, NoValue)) in
+        Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
+     | Some exp ->
+        let+ acc = codegen_expr acc exp in
+        let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+        let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
+        (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
      end
 
 let rec serialize_type t = match t with

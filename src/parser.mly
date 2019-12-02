@@ -24,9 +24,11 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token PLUS MINUS
 %token ASTERISK SLASH PERCENT
 %token UMINUS
+%token ADDRESSOF
+%token DEREF
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
-%token I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE
+%token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE
 %token TYPE VAL VAR FUNC EXTERN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
@@ -42,7 +44,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %left PLUS MINUS
 %left ASTERISK SLASH PERCENT
 %nonassoc UMINUS
-
+%nonassoc ADDRESSOF
 
 %start <Parsetree.top_decl list> file
 
@@ -121,23 +123,41 @@ _block_body: statement    { [$1] }
 
 // == TODO ==
 
-type_: basetype         { $1 }
+type_: base_type        { $1 }
+  | pointer_type        { $1 }
   | IDENTIFIER          { NewType $1 }
-  | LPAREN type_ RPAREN { $2 }
+  | FUNC
+LPAREN type_list RPAREN
+type_                   { Function ($3, $5) }
 ;
-basetype: I8            { I8 }
-  | I16                 { I16 }
-  | I32                 { I32 }
-  | I64                 { I64 }
-  | U8                  { U8 }
-  | U16                 { U16 }
-  | U32                 { U32 }
-  | U64                 { U64 }
-  | F32                 { F32 }
-  | F64                 { F64 }
-  | BOOL                { Bool }
-  | VOID                { Void }
+
+base_type: I8              { I8 }
+  | I16                    { I16 }
+  | I32                    { I32 }
+  | I64                    { I64 }
+  | U8                     { U8 }
+  | U16                    { U16 }
+  | U32                    { U32 }
+  | U64                    { U64 }
+  | F32                    { F32 }
+  | F64                    { F64 }
+  | BOOL                   { Bool }
+  | VOID                   { Void }
 ;
+
+pointer_type: LBRACKET type_ RBRACKET { Pointer $2 }
+  | LBRACKET MUT type_ RBRACKET       { MutPointer $3 }
+
+type_list: _type_list      { List.rev $1 }
+;
+_type_list:                { [] }
+  | type_                  { [$1] }
+  | _type_list COMMA type_ { $3 :: $1 }
+;
+
+cast_type: base_type        { $1 }
+  | pointer_type            { $1 }
+  | LPAREN cast_type RPAREN { $2 }
 
 expr: IDENTIFIER                               { Identifier $1 }
   | literal                                    { Literal $1 }
@@ -146,7 +166,7 @@ expr: IDENTIFIER                               { Identifier $1 }
   | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
   | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
   | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
-  | basetype LPAREN expr RPAREN                { TypeCast ($1, $3) }
+  | cast_type LPAREN expr RPAREN               { TypeCast ($1, $3) }
 
   | IDENTIFIER EQ expr
     { Assignment ($1, $3) }
@@ -190,9 +210,11 @@ expr: IDENTIFIER                               { Identifier $1 }
   | expr AND expr              { BinOp ($1, And, $3) }
   | expr OR expr               { BinOp ($1, Or, $3) }
 
-  | MINUS expr %prec UMINUS    { UnOp (UMinus, $2) }
-  | NOT expr                   { UnOp (Not, $2) }
-  | BIT_NOT expr               { UnOp (BitNot, $2) }
+  | MINUS expr %prec UMINUS      { UnOp (UMinus, $2) }
+  | NOT expr                     { UnOp (Not, $2) }
+  | BIT_NOT expr                 { UnOp (BitNot, $2) }
+  | BIT_AND expr %prec ADDRESSOF { UnOp (AddressOf, $2) }
+  | DEREF expr                   { UnOp (Deref, $2) }
 ;
 
 expr_list: _expr_list     { List.rev $1 }

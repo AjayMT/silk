@@ -1,0 +1,10 @@
+
+extern func putchar(i: i32): i32;
+
+func main(): i32 {
+  val b = 97;
+  val a = &b;
+  putchar(@a);
+  putchar(10);
+  return 0;
+}
