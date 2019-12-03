@@ -252,14 +252,15 @@ let trav_valdecl symtab symtab_stack types_tab vd =
      check_declared_type Var ident asttype expr
 
 
-let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
+let rec construct_block_symtab base_symtab symtab_stack types_tab rettype stmts =
   let addblk block_number symtab new_base blk =
     let new_symtab st = SymtabM.add (string_of_int block_number)
                           (Value (Val, Void, Some st))
                           symtab
     in
     let+ st =
-      construct_block_symtab new_base (symtab :: symtab_stack) types_tab blk
+      construct_block_symtab
+        new_base (symtab :: symtab_stack) types_tab rettype blk
     in
     (block_number + 1, new_symtab st)
   in
@@ -326,11 +327,15 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab stmts =
        end
     | Parsetree.Return exo ->
        begin match exo with
-       (* TODO check that return type matches *)
        | Some exp ->
-          let+ _ = eval_expr_type (symtab :: symtab_stack) exp in
-          (block_number, symtab)
-       | None -> Ok (block_number, symtab)
+          let* ext = eval_expr_type (symtab :: symtab_stack) exp in
+          if compare_types rettype ext then
+            Ok (block_number, symtab)
+          else Error "Error: Incorrect return type"
+       | None ->
+          if compare_types rettype Void then
+            Ok (block_number, symtab)
+          else Error "Error: Incorrect return type"
        end
     | Parsetree.Continue | Parsetree.Break -> Ok (block_number, symtab)
   in
@@ -384,7 +389,11 @@ let construct_symtab ast =
        begin match body with
        | Parsetree.Block blk ->
           let nst = SymtabM.add ident (Value (Val, ft, None)) symtab in
-          let+ st = construct_block_symtab new_symtab [nst] symtab blk in
+          let rt = match ft with
+            | Function (_, rt) -> rt
+            | _ -> Void
+          in
+          let+ st = construct_block_symtab new_symtab [nst] symtab rt blk in
           SymtabM.add ident (Value (Val, ft, Some st)) symtab
        | _ -> Error "Error: Not a block"
        end

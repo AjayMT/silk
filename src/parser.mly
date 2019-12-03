@@ -45,6 +45,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %left ASTERISK SLASH PERCENT
 %nonassoc UMINUS
 %nonassoc ADDRESSOF
+%nonassoc DEREF
 
 %start <Parsetree.top_decl list> file
 
@@ -212,9 +213,9 @@ expr: IDENTIFIER                               { Identifier $1 }
 
   | MINUS expr %prec UMINUS      { UnOp (UMinus, $2) }
   | NOT expr                     { UnOp (Not, $2) }
+  | DEREF expr                   { UnOp (Deref, $2) }
   | BIT_NOT expr                 { UnOp (BitNot, $2) }
   | BIT_AND expr %prec ADDRESSOF { UnOp (AddressOf, $2) }
-  | DEREF expr                   { UnOp (Deref, $2) }
 ;
 
 expr_list: _expr_list     { List.rev $1 }

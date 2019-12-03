@@ -227,32 +227,28 @@ let construct_ir_tree ast symtab =
        | _ -> Error "Error: Not a function"
        end
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
-       let lexp = map_expr scope_map symtab_stack lexp_ in
-       let rexp = map_expr scope_map symtab_stack rexp_ in
-       begin match (lexp, rexp) with
-       | (Error e, _) -> Error e
-       | (_, Error e) -> Error e
-       | (Ok l, Ok r) ->
-          match op_ with
-          | Parsetree.Plus -> Ok (BinOp (get_ir_expr_type l, Plus, l, r))
-          | Parsetree.Minus -> Ok (BinOp (get_ir_expr_type l, Minus, l, r))
-          | Parsetree.Times -> Ok (BinOp (get_ir_expr_type l, Times, l, r))
-          | Parsetree.Divide -> Ok (BinOp (get_ir_expr_type l, Divide, l, r))
-          | Parsetree.Modulus -> Ok (BinOp (get_ir_expr_type l, Modulus, l, r))
+       let* l = map_expr scope_map symtab_stack lexp_ in
+       let+ r = map_expr scope_map symtab_stack rexp_ in
+       begin match op_ with
+       | Parsetree.Plus -> BinOp (get_ir_expr_type l, Plus, l, r)
+       | Parsetree.Minus -> BinOp (get_ir_expr_type l, Minus, l, r)
+       | Parsetree.Times -> BinOp (get_ir_expr_type l, Times, l, r)
+       | Parsetree.Divide -> BinOp (get_ir_expr_type l, Divide, l, r)
+       | Parsetree.Modulus -> BinOp (get_ir_expr_type l, Modulus, l, r)
 
-          | Parsetree.Equal -> Ok (BinOp (get_ir_expr_type l, Equal, l, r))
-          | Parsetree.LessThan -> Ok (BinOp (get_ir_expr_type l, LessThan, l, r))
-          | Parsetree.GreaterThan ->
-             Ok (BinOp (get_ir_expr_type l, GreaterThan, l, r))
+       | Parsetree.Equal -> BinOp (get_ir_expr_type l, Equal, l, r)
+       | Parsetree.LessThan -> BinOp (get_ir_expr_type l, LessThan, l, r)
+       | Parsetree.GreaterThan ->
+          BinOp (get_ir_expr_type l, GreaterThan, l, r)
 
-          | Parsetree.And | Parsetree.BitAnd ->
-             Ok (BinOp (get_ir_expr_type l, And, l, r))
-          | Parsetree.Or | Parsetree.BitOr ->
-             Ok (BinOp (get_ir_expr_type l, Or, l, r))
-          | Parsetree.BitXor -> Ok (BinOp (get_ir_expr_type l, Xor, l, r))
+       | Parsetree.And | Parsetree.BitAnd ->
+          BinOp (get_ir_expr_type l, And, l, r)
+       | Parsetree.Or | Parsetree.BitOr ->
+          BinOp (get_ir_expr_type l, Or, l, r)
+       | Parsetree.BitXor -> BinOp (get_ir_expr_type l, Xor, l, r)
 
-          | Parsetree.LShift -> Ok (BinOp (get_ir_expr_type l, LShift, l, r))
-          | Parsetree.RShift -> Ok (BinOp (get_ir_expr_type l, RShift, l, r))
+       | Parsetree.LShift -> BinOp (get_ir_expr_type l, LShift, l, r)
+       | Parsetree.RShift -> BinOp (get_ir_expr_type l, RShift, l, r)
        end
     | Parsetree.UnOp (op, expr) ->
        let+ ir_expr = map_expr scope_map symtab_stack expr in
