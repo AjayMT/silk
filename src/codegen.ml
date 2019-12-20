@@ -28,6 +28,9 @@ type ir_expr = Identifier of llvm_type * string
              | ItoF of llvm_type * ir_expr * llvm_type
              | FtoI of llvm_type * ir_expr * llvm_type
              | BitCast of llvm_type * ir_expr * llvm_type
+             | PtoI of llvm_type * ir_expr * llvm_type
+             | ItoP of llvm_type * ir_expr * llvm_type
+             | GetElemPtr of llvm_type * llvm_type * ir_expr * llvm_type * ir_expr
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
              | Decl of ir_decl
@@ -51,6 +54,7 @@ type llvm_value = LTemporary of int
                 | NoValue
 type llvm_inst = Alloca of llvm_type
                | Load of llvm_type * llvm_type * llvm_value
+               | GEP of llvm_type * llvm_type * llvm_value * llvm_type * llvm_value
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
                | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
@@ -79,6 +83,8 @@ type llvm_inst = Alloca of llvm_type
                | ItoFP of llvm_type * llvm_value * llvm_type
                | FPtoI of llvm_type * llvm_value * llvm_type
                | BitCast of llvm_type * llvm_value * llvm_type
+               | PtrToInt of llvm_type * llvm_value * llvm_type
+               | IntToPtr of llvm_type * llvm_value * llvm_type
 
                | NoInst
 
@@ -137,6 +143,9 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | ItoF (_, _, t) -> t
   | FtoI (_, _, t) -> t
   | BitCast (_, _, t) -> t
+  | PtoI (_, _, t) -> t
+  | ItoP (_, _, t) -> t
+  | GetElemPtr (_, pt, _, _, _) -> pt
 
 let construct_ir_tree ast symtab =
   let rec find_in_scope scope_stack symtab_stack name =
@@ -209,9 +218,10 @@ let construct_ir_tree ast symtab =
           begin match ir_expr_type with
           | F32 | F64 ->
              FtoI (ir_expr_type, ir_expr, casttype)
-          | _ ->
-             BitCast (ir_expr_type, ir_expr, casttype)
+          | Pointer t -> PtoI (ir_expr_type, ir_expr, casttype)
+          | _ -> BitCast (ir_expr_type, ir_expr, casttype)
           end
+       | Pointer t -> ItoP (ir_expr_type, ir_expr, casttype)
        | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        end
     | Parsetree.FunctionCall (fexp, argexps) ->
@@ -229,26 +239,45 @@ let construct_ir_tree ast symtab =
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
        let* l = map_expr scope_map symtab_stack lexp_ in
        let+ r = map_expr scope_map symtab_stack rexp_ in
+       let l_type = get_ir_expr_type l in
+       let r_type = get_ir_expr_type r in
+       let ptr = match (l_type, r_type) with
+         | (Pointer _, _) -> Some (l_type, l, r_type, r)
+         | (_, Pointer _) -> Some (r_type, r, l_type, l)
+         | _ -> None
+       in
        begin match op_ with
-       | Parsetree.Plus -> BinOp (get_ir_expr_type l, Plus, l, r)
-       | Parsetree.Minus -> BinOp (get_ir_expr_type l, Minus, l, r)
-       | Parsetree.Times -> BinOp (get_ir_expr_type l, Times, l, r)
-       | Parsetree.Divide -> BinOp (get_ir_expr_type l, Divide, l, r)
-       | Parsetree.Modulus -> BinOp (get_ir_expr_type l, Modulus, l, r)
+       | Parsetree.Plus ->
+          begin match ptr with
+          | Some (Pointer p, ptr_value, other_type, other_value) ->
+             GetElemPtr (p, Pointer p, ptr_value, other_type, other_value)
+          | _ -> BinOp (l_type, Plus, l, r)
+          end
+       | Parsetree.Minus ->
+          begin match ptr with
+          | Some (Pointer p, ptr_value, other_type, other_value) ->
+             GetElemPtr (p, Pointer p, ptr_value, other_type,
+                         UnOp (other_type, UMinus, other_value))
+          | _ -> BinOp (l_type, Minus, l, r)
+          end
 
-       | Parsetree.Equal -> BinOp (get_ir_expr_type l, Equal, l, r)
-       | Parsetree.LessThan -> BinOp (get_ir_expr_type l, LessThan, l, r)
+       | Parsetree.Times -> BinOp (l_type, Times, l, r)
+       | Parsetree.Divide -> BinOp (l_type, Divide, l, r)
+       | Parsetree.Modulus -> BinOp (l_type, Modulus, l, r)
+
+       | Parsetree.Equal -> BinOp (l_type, Equal, l, r)
+       | Parsetree.LessThan -> BinOp (l_type, LessThan, l, r)
        | Parsetree.GreaterThan ->
-          BinOp (get_ir_expr_type l, GreaterThan, l, r)
+          BinOp (l_type, GreaterThan, l, r)
 
        | Parsetree.And | Parsetree.BitAnd ->
-          BinOp (get_ir_expr_type l, And, l, r)
+          BinOp (l_type, And, l, r)
        | Parsetree.Or | Parsetree.BitOr ->
-          BinOp (get_ir_expr_type l, Or, l, r)
-       | Parsetree.BitXor -> BinOp (get_ir_expr_type l, Xor, l, r)
+          BinOp (l_type, Or, l, r)
+       | Parsetree.BitXor -> BinOp (l_type, Xor, l, r)
 
-       | Parsetree.LShift -> BinOp (get_ir_expr_type l, LShift, l, r)
-       | Parsetree.RShift -> BinOp (get_ir_expr_type l, RShift, l, r)
+       | Parsetree.LShift -> BinOp (l_type, LShift, l, r)
+       | Parsetree.RShift -> BinOp (l_type, RShift, l, r)
        end
     | Parsetree.UnOp (op, expr) ->
        let+ ir_expr = map_expr scope_map symtab_stack expr in
@@ -258,7 +287,15 @@ let construct_ir_tree ast symtab =
          | Parsetree.Deref -> Deref
          | Parsetree.AddressOf -> AddressOf
        in
-       UnOp (get_ir_expr_type ir_expr, o, ir_expr)
+       let t = get_ir_expr_type ir_expr in
+       begin match o with
+       | AddressOf ->
+          begin match ir_expr with
+          | UnOp (_, Deref, exp) -> exp
+          | _ -> UnOp (Pointer t, o, ir_expr)
+          end
+       | _ -> UnOp (t, o, ir_expr)
+       end
     (* TODO *)
     | Parsetree.Index (array_exp, _) -> map_expr scope_map symtab_stack
                                           array_exp
@@ -546,6 +583,30 @@ let rec codegen_expr acc expr =
      let res = LTemporary tmp_idx in
      let new_inst = (res, BitCast (at, v, bt)) in
      (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | PtoI (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, PtrToInt (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | ItoP (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, IntToPtr (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+
+  | GetElemPtr (val_type, ptr_type, ptr_expr, idx_type, idx_expr) ->
+     let* acc = codegen_expr acc ptr_expr in
+     let (_, _, _, _, ptr_value) = acc in
+     let+ acc = codegen_expr acc idx_expr in
+     let (cont_label, brk_label, tmp_idx, insts, idx_value) = acc in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res,
+                     GEP (val_type, ptr_type, ptr_value, idx_type, idx_value)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
 
   | BinOp (t, op, l_expr, r_expr) ->
      let* acc = codegen_expr acc l_expr in
@@ -780,6 +841,10 @@ let serialize_irt irt_roots =
       | Alloca t -> "alloca " ^ (serialize_type t)
       | Load (lt, t, v) -> "load " ^ (serialize_type lt) ^ ", "
                            ^ (serialize_type t) ^ " " ^ (serialize_value v)
+      | GEP (vt, pt, pv, it, iv) ->
+         String.concat " " ["getelementptr"; (serialize_type vt) ^ ",";
+                            serialize_type pt; (serialize_value pv) ^ ",";
+                            serialize_type it; serialize_value iv]
       | Store (t1, v1, t2, v2) -> String.concat " " ["store";
                                                      serialize_type t1;
                                                      (serialize_value v1) ^ ",";
@@ -890,6 +955,21 @@ let serialize_irt irt_roots =
             serialize_value v;
             "to";
             serialize_type bt]
+      | PtrToInt (at, v, bt) ->
+         String.concat " "
+           ["ptrtoint";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
+      | IntToPtr (at, v, bt) ->
+         String.concat " "
+           ["inttoptr";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
+
     in
     match value with
     | NoValue -> inst_str inst

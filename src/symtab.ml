@@ -163,22 +163,35 @@ let rec eval_expr_type symtab_stack expr = match expr with
      let* a_type = eval_expr_type symtab_stack a in
      let* b_type = eval_expr_type symtab_stack b in
      let err = Error "Error: Incorrect types for binary operation" in
-     (* TODO Pointer arithmetic *)
      begin match op with
-     | Plus | Minus | Times | Divide | Modulus | BitAnd | BitOr | BitXor
+     | Plus | Minus ->
+        begin match (a_type, b_type) with
+        | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
+          | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64) ->
+           Ok a_type
+        | (Pointer _, I8) | (Pointer _, I16) | (Pointer _, I32) | (Pointer _, I64)
+          | (Pointer _, U8) | (Pointer _, U16) | (Pointer _, U32) | (Pointer _, U64) ->
+           Ok a_type
+        | (MutPointer _, I8) | (MutPointer _, I16)
+          | (MutPointer _, I32) | (MutPointer _, I64)
+          | (MutPointer _, U8) | (MutPointer _, U16)
+          | (MutPointer _, U32) | (MutPointer _, U64) ->
+           Ok a_type
+        | _ -> err
+        end
+     | Times | Divide | Modulus | BitAnd | BitOr | BitXor
        | RShift | LShift ->
         begin match (a_type, b_type) with
         | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
           | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64) ->
            Ok a_type
-        | (Pointer t, _) -> Ok a_type
         | _ -> err
         end
      | Equal | LessThan | GreaterThan ->
         begin match (a_type, b_type) with
         | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
           | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64)
-          | (Bool, Bool) | (Pointer _, Pointer _) ->
+          | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
            Ok Bool
         | _ -> err
         end
@@ -211,11 +224,13 @@ let rec eval_expr_type symtab_stack expr = match expr with
            | Some (Value (Val, _, _)) -> Ok (Pointer t)
            | _ -> err
            end
+        | Parsetree.UnOp (Parsetree.Deref, exp) -> eval_expr_type symtab_stack exp
         | _ -> Error "Error: Invalid operand type for 'address' operator"
         end
      | Parsetree.Deref ->
         begin match t with
         | Pointer t -> Ok t
+        | MutPointer t -> Ok t
         | _ -> err
         end
      end
