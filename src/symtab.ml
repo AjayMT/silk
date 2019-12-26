@@ -7,13 +7,13 @@ module SymtabM = Map.Make(String)
 
 type valness = Val | Var
 
-type silktype = I8 | I16 | I32 | I64
-                | U8 | U16 | U32 | U64
-                | F32 | F64
-                | Bool | Void
-                | Pointer of silktype | MutPointer of silktype
-                | Function of (silktype list) * silktype
-                | NewType of string * silktype
+type silktype = I of int
+              | U of int
+              | F of int
+              | Bool | Void
+              | Pointer of silktype | MutPointer of silktype
+              | Function of (silktype list) * silktype
+              | NewType of string * silktype
 
 type symbol = Value of valness * silktype * symbol SymtabM.t option
             | Type of silktype
@@ -36,29 +36,29 @@ let rec find_symtab_stack name ststack = match ststack with
      | None -> find_symtab_stack name zs
 
 let silktype_of_literal_type l = match l with
-  | Parsetree.LI8 _  -> I8
-  | Parsetree.LI16 _ -> I16
-  | Parsetree.LI32 _ -> I32
-  | Parsetree.LI64 _ -> I64
-  | Parsetree.LU8 _  -> U8
-  | Parsetree.LU16 _ -> U16
-  | Parsetree.LU32 _ -> U32
-  | Parsetree.LU64 _ -> U64
-  | Parsetree.LF32 _ -> F32
-  | Parsetree.LF64 _ -> F64
+  | Parsetree.LI8 _  -> I 8
+  | Parsetree.LI16 _ -> I 16
+  | Parsetree.LI32 _ -> I 32
+  | Parsetree.LI64 _ -> I 64
+  | Parsetree.LU8 _  -> U 8
+  | Parsetree.LU16 _ -> U 16
+  | Parsetree.LU32 _ -> U 32
+  | Parsetree.LU64 _ -> U 64
+  | Parsetree.LF32 _ -> F 32
+  | Parsetree.LF64 _ -> F 64
   | Parsetree.LBool _ -> Bool
 
 let rec silktype_of_asttype symtab_stack t = match t with
-  | Parsetree.I8  -> Ok I8
-  | Parsetree.I16 -> Ok I16
-  | Parsetree.I32 -> Ok I32
-  | Parsetree.I64 -> Ok I64
-  | Parsetree.U8  -> Ok U8
-  | Parsetree.U16 -> Ok U16
-  | Parsetree.U32 -> Ok U32
-  | Parsetree.U64 -> Ok U64
-  | Parsetree.F32 -> Ok F32
-  | Parsetree.F64 -> Ok F64
+  | Parsetree.I8  -> Ok (I 8)
+  | Parsetree.I16 -> Ok (I 16)
+  | Parsetree.I32 -> Ok (I 32)
+  | Parsetree.I64 -> Ok (I 64)
+  | Parsetree.U8  -> Ok (U 8)
+  | Parsetree.U16 -> Ok (U 16)
+  | Parsetree.U32 -> Ok (U 32)
+  | Parsetree.U64 -> Ok (U 64)
+  | Parsetree.F32 -> Ok (F 32)
+  | Parsetree.F64 -> Ok (F 64)
   | Parsetree.Bool -> Ok Bool
   | Parsetree.Void -> Ok Void
   | Parsetree.Pointer t ->
@@ -84,30 +84,34 @@ let rec silktype_of_asttype symtab_stack t = match t with
 let rec compare_types a b = match (a, b) with
   | (Function (aargtypes, arettype), Function (bargtypes, brettype)) ->
      let f b t1 t2 = if b then compare_types t1 t2 else b in
-     List.length aargtypes == List.length bargtypes
+     List.length aargtypes = List.length bargtypes
      && (List.fold_left2 f true aargtypes bargtypes)
      && (compare_types arettype brettype)
   | (NewType (aname, atype), NewType (bname, btype)) ->
-     (aname == bname) && (compare_types atype btype)
+     (aname = bname) && (compare_types atype btype)
   | (Pointer a, Pointer b) -> compare_types a b
   | (MutPointer a, MutPointer b) -> compare_types a b
-  | (a, b) -> a == b
+  | (a, b) -> a = b
 
 let check_viable_cast cast_t expr_t = match cast_t with
-  | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 ->
+  | I _ | U _ ->
      begin match expr_t with
-     | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64
-       | MutPointer _ -> Ok ()
+     | I _ | U _ | F _ | MutPointer _ -> Ok ()
      | _ -> Error "Error: Unviable type cast"
      end
-  | F32 | F64 ->
+  | F f ->
      begin match expr_t with
-     | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64 -> Ok ()
+     | I _ | U _ | F _ -> Ok ()
+     | _ -> Error "Error: Unviable type cast"
+     end
+  | Pointer _ ->
+     begin match expr_t with
+     | Pointer _ -> Ok ()
      | _ -> Error "Error: Unviable type cast"
      end
   | MutPointer _ ->
      begin match expr_t with
-     | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | MutPointer _ -> Ok ()
+     | I _ | U _ | MutPointer _ -> Ok ()
      | _ -> Error "Error: Unviable type cast"
      end
   | _ -> if compare_types cast_t expr_t then Ok ()
@@ -148,7 +152,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
            in
            Result.bind (eval_expr_type symtab_stack exp) check_arg_type
          in
-         if List.length argtypes == List.length args then
+         if List.length argtypes = List.length args then
            List.fold_left2 match_types (Ok Bool) argtypes exprs
          else Error ("Error: Incorrect number of arguments")
        in
@@ -166,32 +170,21 @@ let rec eval_expr_type symtab_stack expr = match expr with
      begin match op with
      | Plus | Minus ->
         begin match (a_type, b_type) with
-        | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
-          | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64) ->
-           Ok a_type
-        | (Pointer _, I8) | (Pointer _, I16) | (Pointer _, I32) | (Pointer _, I64)
-          | (Pointer _, U8) | (Pointer _, U16) | (Pointer _, U32) | (Pointer _, U64) ->
-           Ok a_type
-        | (MutPointer _, I8) | (MutPointer _, I16)
-          | (MutPointer _, I32) | (MutPointer _, I64)
-          | (MutPointer _, U8) | (MutPointer _, U16)
-          | (MutPointer _, U32) | (MutPointer _, U64) ->
-           Ok a_type
+        | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
+        | (Pointer _, I _) | (Pointer _, U _)
+          | (MutPointer _, I _) | (MutPointer _, U _) -> Ok a_type
         | _ -> err
         end
      | Times | Divide | Modulus | BitAnd | BitOr | BitXor
        | RShift | LShift ->
         begin match (a_type, b_type) with
-        | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
-          | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64) ->
-           Ok a_type
+        | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
         | _ -> err
         end
      | Equal | LessThan | GreaterThan ->
         begin match (a_type, b_type) with
-        | (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64)
-          | (U8, U8) | (U16, U16) | (U32, U32) | (U64, U64)
-          | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
+        | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
+        | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
            Ok Bool
         | _ -> err
         end
@@ -207,7 +200,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
      begin match op with
      | Parsetree.UMinus | Parsetree.BitNot ->
         begin match t with
-        | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 -> Ok t
+        | I _ | U _ -> Ok t
         | _ -> err
         end
      | Parsetree.Not ->
@@ -235,7 +228,7 @@ let rec eval_expr_type symtab_stack expr = match expr with
         end
      end
   (* TODO *)
-  | Parsetree.Index (array, idx) -> Ok I32
+  | Parsetree.Index (array, idx) -> Ok (I 32)
 
 let trav_valdecl symtab symtab_stack types_tab vd =
   let check_inferred_type mut ident expr =

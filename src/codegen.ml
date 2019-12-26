@@ -5,12 +5,12 @@
 
 module ScopeM = Map.Make(String)
 
-type llvm_type = I1 | I8 | I16 | I32 | I64
-                 | U1 | U8 | U16 | U32 | U64
-                 | F32 | F64
-                 | Pointer of llvm_type
-                 | Function of llvm_type list * llvm_type
-                 | Void
+type llvm_type = I of int
+               | U of int
+               | F of int
+               | Pointer of llvm_type
+               | Function of llvm_type list * llvm_type
+               | Void
 
 type ir_literal = Int of int | Float of float
 type ir_bin_op = Plus | Minus | Times | Divide | Modulus
@@ -30,6 +30,8 @@ type ir_expr = Identifier of llvm_type * string
              | BitCast of llvm_type * ir_expr * llvm_type
              | PtoI of llvm_type * ir_expr * llvm_type
              | ItoP of llvm_type * ir_expr * llvm_type
+             | Trunc of llvm_type * ir_expr * llvm_type
+             | Ext of llvm_type * ir_expr * llvm_type
              | GetElemPtr of llvm_type * llvm_type * ir_expr * llvm_type * ir_expr
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
@@ -85,6 +87,8 @@ type llvm_inst = Alloca of llvm_type
                | BitCast of llvm_type * llvm_value * llvm_type
                | PtrToInt of llvm_type * llvm_value * llvm_type
                | IntToPtr of llvm_type * llvm_value * llvm_type
+               | Trunc of llvm_type * llvm_value * llvm_type
+               | Ext of llvm_type * llvm_value * llvm_type
 
                | NoInst
 
@@ -98,17 +102,10 @@ let rec llvm_type_of_silktype t =
      let llargtypes = List.map llvm_type_of_silktype argtypes in
      let llrettype = llvm_type_of_silktype rettype in
      Function (llargtypes, llrettype)
-  | Symtab.Bool -> I1
-  | Symtab.I8  -> I8
-  | Symtab.I16 -> I16
-  | Symtab.I32 -> I32
-  | Symtab.I64 -> I64
-  | Symtab.U8  -> U8
-  | Symtab.U16 -> U16
-  | Symtab.U32 -> U32
-  | Symtab.U64 -> U64
-  | Symtab.F32 -> F32
-  | Symtab.F64 -> F64
+  | Symtab.Bool -> I 1
+  | Symtab.I i  -> I i
+  | Symtab.U u  -> U u
+  | Symtab.F f  -> F f
   | Symtab.Void -> Void
   | Symtab.Pointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
@@ -145,6 +142,8 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | BitCast (_, _, t) -> t
   | PtoI (_, _, t) -> t
   | ItoP (_, _, t) -> t
+  | Trunc (_, _, t) -> t
+  | Ext (_, _, t) -> t
   | GetElemPtr (_, pt, _, _, _) -> pt
 
 let construct_ir_tree ast symtab =
@@ -179,17 +178,17 @@ let construct_ir_tree ast symtab =
        end
     | Parsetree.Literal l ->
        begin match l with
-       | Parsetree.LI8  i -> Ok (Literal (I8, Int i))
-       | Parsetree.LI16 i -> Ok (Literal (I16, Int i))
-       | Parsetree.LI32 i -> Ok (Literal (I32, Int i))
-       | Parsetree.LI64 i -> Ok (Literal (I64, Int i))
-       | Parsetree.LU8  i -> Ok (Literal (U8, Int i))
-       | Parsetree.LU16 i -> Ok (Literal (U16, Int i))
-       | Parsetree.LU32 i -> Ok (Literal (U32, Int i))
-       | Parsetree.LU64 i -> Ok (Literal (U64, Int i))
-       | Parsetree.LF32 f -> Ok (Literal (F32, Float f))
-       | Parsetree.LF64 f -> Ok (Literal (F64, Float f))
-       | Parsetree.LBool b -> Ok (Literal (I1, Int (if b then 1 else 0)))
+       | Parsetree.LI8  i -> Ok (Literal (I 8, Int i))
+       | Parsetree.LI16 i -> Ok (Literal (I 16, Int i))
+       | Parsetree.LI32 i -> Ok (Literal (I 32, Int i))
+       | Parsetree.LI64 i -> Ok (Literal (I 64, Int i))
+       | Parsetree.LU8  i -> Ok (Literal (U 8, Int i))
+       | Parsetree.LU16 i -> Ok (Literal (U 16, Int i))
+       | Parsetree.LU32 i -> Ok (Literal (U 32, Int i))
+       | Parsetree.LU64 i -> Ok (Literal (U 64, Int i))
+       | Parsetree.LF32 f -> Ok (Literal (F 32, Float f))
+       | Parsetree.LF64 f -> Ok (Literal (F 64, Float f))
+       | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
        end
     | Parsetree.Assignment (name, exp) ->
        let symbol = find_symtab_stack name symtab_stack in
@@ -206,22 +205,36 @@ let construct_ir_tree ast symtab =
        let+ ir_expr = map_expr scope_map symtab_stack expr in
        let casttype = llvm_type_of_silktype silktype in
        let ir_expr_type = get_ir_expr_type ir_expr in
-       (* TODO extend, truncate *)
        begin match casttype with
-       | F64 | F32 ->
+       | F f ->
           begin match ir_expr_type with
-          | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
-             ItoF (ir_expr_type, ir_expr, casttype)
-          | _ -> BitCast (ir_expr_type, ir_expr, casttype)
+          | I _ | U _ -> ItoF (ir_expr_type, ir_expr, casttype)
+          | F g ->
+             begin match (f, g) with
+             | (f, g) when f > g -> Ext (ir_expr_type, ir_expr, casttype)
+             | (f, g) when g > f -> Trunc (ir_expr_type, ir_expr, casttype)
+             | _ -> ir_expr
+             end
+          | _ -> ir_expr
           end
-       | I1 | I8 | I16 | I32 | I64 | U1 | U8 | U16 | U32 | U64 ->
+       | I i | U i ->
           begin match ir_expr_type with
-          | F32 | F64 ->
-             FtoI (ir_expr_type, ir_expr, casttype)
+          | F _ -> FtoI (ir_expr_type, ir_expr, casttype)
           | Pointer t -> PtoI (ir_expr_type, ir_expr, casttype)
-          | _ -> BitCast (ir_expr_type, ir_expr, casttype)
+          | I j | U j ->
+             begin match (i, j) with
+             | (i, j) when i > j -> Ext (ir_expr_type, ir_expr, casttype)
+             | (i, j) when j > i -> Trunc (ir_expr_type, ir_expr, casttype)
+             | _ -> ir_expr
+             end
+          | _ -> ir_expr
           end
-       | Pointer t -> ItoP (ir_expr_type, ir_expr, casttype)
+       | Pointer t ->
+          begin match ir_expr_type with
+          | I _ | U _ -> ItoP (ir_expr_type, ir_expr, casttype)
+          | Pointer s when t <> s -> BitCast (ir_expr_type, ir_expr, casttype)
+          | _ -> ir_expr
+          end
        | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        end
     | Parsetree.FunctionCall (fexp, argexps) ->
@@ -487,8 +500,7 @@ let construct_ir_tree ast symtab =
                map_stmts stmts [name] scope_map [Option.get inner_st]
              in
              let ir_stmts =
-               if rt == Void then
-                 (Return None) :: ir_stmts
+               if rt = Void then (Return None) :: ir_stmts
                else ir_stmts
              in
              (scope_map_,
@@ -597,6 +609,20 @@ let rec codegen_expr acc expr =
      let res = LTemporary tmp_idx in
      let new_inst = (res, IntToPtr (at, v, bt)) in
      (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | Trunc (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, Trunc (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | Ext (at, exp, bt) ->
+     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+       codegen_expr acc exp
+     in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, Ext (at, v, bt)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
 
   | GetElemPtr (val_type, ptr_type, ptr_expr, idx_type, idx_expr) ->
      let* acc = codegen_expr acc ptr_expr in
@@ -650,7 +676,7 @@ let rec codegen_expr acc expr =
         let new_inst = match op with
           | UMinus ->
              begin match t with
-             | F64 -> FNeg (t, result)
+             | F _ -> FNeg (t, result)
              | _ -> Sub (t, LLiteral (Int 0), result)
              end
           | Not -> Xor (t, result, LLiteral (Int (-1)))
@@ -807,13 +833,10 @@ let rec serialize_type t = match t with
        (String.concat ", " (List.map serialize_type ats)) ^
          ")*"
 
-  | I1  | U1  -> "i1"
-  | I8  | U8  -> "i8"
-  | I16 | U16 -> "i16"
-  | I32 | U32 -> "i32"
-  | I64 | U64 -> "i64"
-  | F32 -> "float"
-  | F64 -> "double"
+  | I i  | U i  -> "i" ^ (string_of_int i)
+  | F 32 -> "float"
+  | F 64 -> "double"
+  | F _  -> "<Error>"
 
 
 let serialize_literal l = match l with
@@ -827,11 +850,11 @@ let serialize_value v = match v with
   | LTemporary i -> "%__tmp." ^ (string_of_int i)
 
 let is_unsigned t = match t with
-  | U1 | U8 | U16 | U32 | U64 -> true
+  | U _ -> true
   | _ -> false
 
 let is_float t = match t with
-  | F64 | F32 -> true
+  | F _ -> true
   | _ -> false
 
 let serialize_irt irt_roots =
@@ -969,7 +992,21 @@ let serialize_irt irt_roots =
             serialize_value v;
             "to";
             serialize_type bt]
-
+      | Trunc (at, v, bt) ->
+         String.concat " "
+           [if is_float bt then "fptrunc" else "trunc";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
+      | Ext (at, v, bt) ->
+         String.concat " "
+           [if is_float at then "fpext" else
+              if is_unsigned bt then "zext" else "sext";
+            serialize_type at;
+            serialize_value v;
+            "to";
+            serialize_type bt]
     in
     match value with
     | NoValue -> inst_str inst
