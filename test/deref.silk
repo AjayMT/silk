@@ -2,9 +2,9 @@
 extern func putchar(i: i32): i32;
 
 func main(): i32 {
-  val b = 97;
-  val a = &b;
-  putchar(@a);
-  putchar(10);
-  return 0;
+  var a = 12;
+  var b = &a;
+  @b = 97;
+  putchar(@b);
+  return a;
 }

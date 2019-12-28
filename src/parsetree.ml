@@ -21,7 +21,7 @@ type bin_op = Plus | Minus | Times | Divide | Modulus
               | RShift | LShift | BitAnd | BitOr | BitXor
 type un_op = UMinus | Not | BitNot | AddressOf | Deref
 
-type expr = Identifier of string | Literal of literal | Assignment of string * expr
+type expr = Identifier of string | Literal of literal | Assignment of expr * expr
             | FunctionCall of expr * expr list
             | TypeCast of type_ * expr
             | BinOp of expr * bin_op * expr

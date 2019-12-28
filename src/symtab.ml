@@ -125,16 +125,30 @@ let rec eval_expr_type symtab_stack expr = match expr with
      | None -> Error ("Error: Identifier " ^ name ^ " undefined")
      end
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
-  | Parsetree.Assignment (n, e) ->
+  | Parsetree.Assignment (lval, e) ->
      let* exprtype = eval_expr_type symtab_stack e in
-     begin match (find_symtab_stack n symtab_stack) with
-     | Some Value (Var, idtype, _) ->
-        if compare_types idtype exprtype then Ok exprtype
-        else Error ("Error: Mismatched types in assignment of " ^ n)
-     | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
-     | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
-     | None -> Error ("Error: Identifier " ^ n ^ " undefined")
-
+     begin match lval with
+     | Parsetree.Identifier (n) ->
+        begin match (find_symtab_stack n symtab_stack) with
+        | Some Value (Var, idtype, _) ->
+           if compare_types idtype exprtype then Ok exprtype
+           else Error ("Error: Mismatched types in assignment of " ^ n)
+        | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
+        | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
+        | None -> Error ("Error: Identifier " ^ n ^ " undefined")
+        end
+     | Parsetree.UnOp (Parsetree.Deref, exp) ->
+        let* ptr_type = eval_expr_type symtab_stack exp in
+        begin match ptr_type with
+        | Pointer _ -> Error "Error: Cannot write immutable pointer"
+        | MutPointer vt ->
+           if compare_types vt exprtype then Ok exprtype
+           else Error ("Error: Mismatched types in pointer assignment")
+        | _ -> Error "Error: Incorrect type for unary operation"
+        end
+     (* TODO *)
+     | Parsetree.Index (array, idx) -> Error "Unimplemented"
+     | _ -> Error "Error: Invalid lvalue expression"
      end
   | Parsetree.TypeCast (t, expr) ->
      let* expr_t = eval_expr_type symtab_stack expr in

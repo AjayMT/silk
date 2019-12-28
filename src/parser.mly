@@ -169,28 +169,28 @@ expr: IDENTIFIER                               { Identifier $1 }
   | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
   | cast_type LPAREN expr RPAREN               { TypeCast ($1, $3) }
 
-  | IDENTIFIER EQ expr
+  | expr EQ expr
     { Assignment ($1, $3) }
-  | IDENTIFIER ADD_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, Plus, $3)) }
-  | IDENTIFIER SUB_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, Minus, $3)) }
-  | IDENTIFIER MUL_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, Times, $3)) }
-  | IDENTIFIER DIV_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, Divide, $3)) }
-  | IDENTIFIER MOD_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, Modulus, $3)) }
-  | IDENTIFIER RSHIFT_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, RShift, $3)) }
-  | IDENTIFIER LSHIFT_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, LShift, $3)) }
-  | IDENTIFIER BIT_AND_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, BitAnd, $3)) }
-  | IDENTIFIER BIT_OR_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, BitOr, $3)) }
-  | IDENTIFIER BIT_XOR_ASSIGN expr
-    { Assignment ($1, BinOp (Identifier $1, BitXor, $3)) }
+  | expr ADD_ASSIGN expr
+    { Assignment ($1, BinOp ($1, Plus, $3)) }
+  | expr SUB_ASSIGN expr
+    { Assignment ($1, BinOp ($1, Minus, $3)) }
+  | expr MUL_ASSIGN expr
+    { Assignment ($1, BinOp ($1, Times, $3)) }
+  | expr DIV_ASSIGN expr
+    { Assignment ($1, BinOp ($1, Divide, $3)) }
+  | expr MOD_ASSIGN expr
+    { Assignment ($1, BinOp ($1, Modulus, $3)) }
+  | expr RSHIFT_ASSIGN expr
+    { Assignment ($1, BinOp ($1, RShift, $3)) }
+  | expr LSHIFT_ASSIGN expr
+    { Assignment ($1, BinOp ($1, LShift, $3)) }
+  | expr BIT_AND_ASSIGN expr
+    { Assignment ($1, BinOp ($1, BitAnd, $3)) }
+  | expr BIT_OR_ASSIGN expr
+    { Assignment ($1, BinOp ($1, BitOr, $3)) }
+  | expr BIT_XOR_ASSIGN expr
+    { Assignment ($1, BinOp ($1, BitXor, $3)) }
 
   | expr PLUS expr             { BinOp ($1, Plus, $3) }
   | expr MINUS expr            { BinOp ($1, Minus, $3) }

@@ -22,6 +22,7 @@ type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
              | Assignment of llvm_type * string * ir_expr
+             | Write of llvm_type * ir_expr * ir_expr
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
              | BinOp of llvm_type * ir_bin_op * ir_expr * ir_expr
              | UnOp of llvm_type * ir_un_op * ir_expr
@@ -134,9 +135,9 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | ParamIdentifier (t, _) -> t
   | Literal (t, _) -> t
   | Assignment (t, _, _) -> t
+  | Write (t, _, _) -> t
   | FunctionCall (t, _, _, _) -> t
   | BinOp (t, _, _, _) -> t
-  | UnOp (t, _, _) -> t
   | ItoF (_, _, t) -> t
   | FtoI (_, _, t) -> t
   | BitCast (_, _, t) -> t
@@ -145,6 +146,15 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | Trunc (_, _, t) -> t
   | Ext (_, _, t) -> t
   | GetElemPtr (_, pt, _, _, _) -> pt
+  | UnOp (t, op, _) ->
+     match op with
+     | AddressOf -> Pointer t
+     | Deref ->
+        begin match t with
+        | Pointer s -> s
+        | _ -> t
+        end
+     | _ -> t
 
 let construct_ir_tree ast symtab =
   let rec find_in_scope scope_stack symtab_stack name =
@@ -190,15 +200,23 @@ let construct_ir_tree ast symtab =
        | Parsetree.LF64 f -> Ok (Literal (F 64, Float f))
        | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
        end
-    | Parsetree.Assignment (name, exp) ->
-       let symbol = find_symtab_stack name symtab_stack in
-       begin match symbol with
-       | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
-       | Some (Symtab.Value (_, type_, _)) ->
-          let t = llvm_type_of_silktype type_ in
-          let+ ir_exp = map_expr scope_map symtab_stack exp in
-          Assignment (t, ScopeM.find name scope_map, ir_exp)
-       | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+    | Parsetree.Assignment (lval, exp) ->
+       begin match lval with
+       | Parsetree.Identifier (name) ->
+          let symbol = find_symtab_stack name symtab_stack in
+          begin match symbol with
+          | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
+          | Some (Symtab.Value (_, type_, _)) ->
+             let t = llvm_type_of_silktype type_ in
+             let+ ir_exp = map_expr scope_map symtab_stack exp in
+             Assignment (t, ScopeM.find name scope_map, ir_exp)
+          | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+          end
+       | Parsetree.UnOp (Parsetree.Deref, lexp) ->
+          let* lexp = map_expr scope_map symtab_stack lexp in
+          let+ rexp = map_expr scope_map symtab_stack exp in
+          Write (get_ir_expr_type rexp, lexp, rexp)
+       | _ -> Error "Error: Invalid lvalue expression"
        end
     | Parsetree.TypeCast (type_, expr) ->
        let* silktype = Symtab.silktype_of_asttype symtab_stack type_ in
@@ -550,11 +568,19 @@ let rec codegen_expr acc expr =
   | Literal (t, lit) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
   | Assignment (t, name, rexpr) ->
-     let* (cont_label, brk_label, tmp_idx, insts, last_result) =
+     let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
        codegen_expr acc rexpr
      in
      let new_inst = (NoValue, Store (t, last_result, Pointer t, LNamed name)) in
-     Ok (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result)
+     (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result)
+  | Write (t, lexp, rexp) ->
+     let* acc = codegen_expr acc lexp in
+     let (_, _, _, _, ptr_val) = acc in
+     let+ (cont_label, brk_label, tmp_idx, insts, r_val) =
+       codegen_expr acc rexp
+     in
+     let new_inst = (NoValue, Store (t, r_val, Pointer t, ptr_val)) in
+     (cont_label, brk_label, tmp_idx, new_inst :: insts, r_val)
   | FunctionCall (rt, fexp, ats, args) ->
      let* acc = codegen_expr acc fexp in
      let (_, _, _, _, f_value) = acc in
@@ -817,8 +843,9 @@ let rec codegen_stmt acc stmt =
         let ret_inst = (NoValue, Ret (Void, NoValue)) in
         Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
      | Some exp ->
-        let+ acc = codegen_expr acc exp in
-        let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+        let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
+          codegen_expr acc exp
+        in
         let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
         (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
      end
