@@ -9,6 +9,7 @@ type llvm_type = I of int
                | U of int
                | F of int
                | Pointer of llvm_type
+               | Array of int * llvm_type
                | Function of llvm_type list * llvm_type
                | Void
 
@@ -21,6 +22,8 @@ type ir_un_op = UMinus | Not | AddressOf | Deref
 type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
+             | ArrayElems of llvm_type * ir_expr list
+             | ArrayInit of llvm_type * ir_expr
              | Assignment of llvm_type * string * ir_expr
              | Write of llvm_type * ir_expr * ir_expr
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
@@ -33,7 +36,8 @@ type ir_expr = Identifier of llvm_type * string
              | ItoP of llvm_type * ir_expr * llvm_type
              | Trunc of llvm_type * ir_expr * llvm_type
              | Ext of llvm_type * ir_expr * llvm_type
-             | GetElemPtr of llvm_type * llvm_type * ir_expr * llvm_type * ir_expr
+             | GetElemPtr of llvm_type * llvm_type * ir_expr
+                             * (llvm_type * ir_expr) list
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
              | Decl of ir_decl
@@ -54,10 +58,13 @@ type ir_root = StaticDecl of llvm_type * string * ir_literal
 type llvm_value = LTemporary of int
                 | LNamed of string
                 | LLiteral of ir_literal
+                | LArrayElems of llvm_type * llvm_value list
+                | LArrayInit of int * llvm_value
                 | NoValue
 type llvm_inst = Alloca of llvm_type
                | Load of llvm_type * llvm_type * llvm_value
-               | GEP of llvm_type * llvm_type * llvm_value * llvm_type * llvm_value
+               | GEP of llvm_type * llvm_type * llvm_value
+                        * (llvm_type * llvm_value) list
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
                | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
@@ -110,6 +117,7 @@ let rec llvm_type_of_silktype t =
   | Symtab.Void -> Void
   | Symtab.Pointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
+  | Symtab.Array (len, t) -> Array (len, llvm_type_of_silktype t)
   | Symtab.NewType (_, t) -> llvm_type_of_silktype t
 
 (* TODO binops, other things *)
@@ -145,7 +153,15 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | ItoP (_, _, t) -> t
   | Trunc (_, _, t) -> t
   | Ext (_, _, t) -> t
-  | GetElemPtr (_, pt, _, _, _) -> pt
+  | ArrayElems (t, _) -> t
+  | ArrayInit (t, _) -> t
+  | GetElemPtr (_, pt, _, idxs) ->
+     let get_elem_type t _ = match t with
+       | Array (_, t) -> t
+       | Pointer t -> t
+       | _ -> t
+     in
+     Pointer (List.fold_left get_elem_type pt idxs)
   | UnOp (t, op, _) ->
      match op with
      | AddressOf -> Pointer t
@@ -216,6 +232,18 @@ let construct_ir_tree ast symtab =
           let* lexp = map_expr scope_map symtab_stack lexp in
           let+ rexp = map_expr scope_map symtab_stack exp in
           Write (get_ir_expr_type rexp, lexp, rexp)
+       | Parsetree.Index (array_expr, idx_expr) ->
+          let* rexp = map_expr scope_map symtab_stack exp in
+          let* array = map_expr scope_map symtab_stack array_expr in
+          let+ idx = map_expr scope_map symtab_stack idx_expr in
+          let idx_type = get_ir_expr_type idx in
+          let array_type = get_ir_expr_type array in
+          let ptr_exp =
+            GetElemPtr (array_type, Pointer array_type,
+                        UnOp (array_type, AddressOf, array),
+                        [(I 32, Literal (I 32, Int 0)); (idx_type, idx)])
+          in
+          Write (get_ir_expr_type rexp, ptr_exp, rexp)
        | _ -> Error "Error: Invalid lvalue expression"
        end
     | Parsetree.TypeCast (type_, expr) ->
@@ -281,14 +309,14 @@ let construct_ir_tree ast symtab =
        | Parsetree.Plus ->
           begin match ptr with
           | Some (Pointer p, ptr_value, other_type, other_value) ->
-             GetElemPtr (p, Pointer p, ptr_value, other_type, other_value)
+             GetElemPtr (p, Pointer p, ptr_value, [other_type, other_value])
           | _ -> BinOp (l_type, Plus, l, r)
           end
        | Parsetree.Minus ->
           begin match ptr with
           | Some (Pointer p, ptr_value, other_type, other_value) ->
-             GetElemPtr (p, Pointer p, ptr_value, other_type,
-                         UnOp (other_type, UMinus, other_value))
+             GetElemPtr (p, Pointer p, ptr_value,
+                         [other_type, UnOp (other_type, UMinus, other_value)])
           | _ -> BinOp (l_type, Minus, l, r)
           end
 
@@ -323,13 +351,36 @@ let construct_ir_tree ast symtab =
        | AddressOf ->
           begin match ir_expr with
           | UnOp (_, Deref, exp) -> exp
-          | _ -> UnOp (Pointer t, o, ir_expr)
+          | _ -> UnOp (t, o, ir_expr)
           end
        | _ -> UnOp (t, o, ir_expr)
        end
-    (* TODO *)
-    | Parsetree.Index (array_exp, _) -> map_expr scope_map symtab_stack
-                                          array_exp
+
+    | Parsetree.ArrayElems elems ->
+       let check_elem acc elem =
+         let+ exp = map_expr scope_map symtab_stack elem in
+         exp :: acc
+       in
+       let+ elems = Symtab.fold_left_bind check_elem [] elems in
+       let elem_type = get_ir_expr_type (List.hd elems) in
+       ArrayElems (Array (List.length elems, elem_type), List.rev elems)
+    | Parsetree.ArrayInit (exp, len) ->
+       let+ elem = map_expr scope_map symtab_stack exp in
+       let elem_type = get_ir_expr_type elem in
+       ArrayInit (Array (len, elem_type), elem)
+    | Parsetree.Index (array_exp, idx_exp) ->
+       let* array = map_expr scope_map symtab_stack array_exp in
+       let* idx = map_expr scope_map symtab_stack idx_exp in
+       let array_type = get_ir_expr_type array in
+       let idx_type = get_ir_expr_type idx in
+       let+ val_type = match array_type with
+         | Array (_, t) -> Ok t
+         | _ -> Error "Error: Cannot index non-array type"
+       in
+       UnOp (Pointer val_type, Deref,
+             GetElemPtr (array_type, Pointer array_type,
+                         UnOp (array_type, AddressOf, array),
+                         [(I 32, Literal (I 32, Int 0)); (idx_type, idx)]))
   in
 
   let rec map_stmt acc stmt =
@@ -567,6 +618,21 @@ let rec codegen_expr acc expr =
      Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
   | Literal (t, lit) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
+  | ArrayElems (t, exprs) ->
+     let* val_type = match t with
+       | Array (_, t) -> Ok t
+       | _ -> Error "WTF"
+     in
+     let add_value acc expr =
+       let (acc, values) = acc in
+       let+ acc = codegen_expr acc expr in
+       let (_, _, _, _, value) = acc in
+       (acc, value :: values)
+     in
+     let+ (acc, values) = Symtab.fold_left_bind add_value (acc, []) exprs in
+     let (cont_label, brk_label, tmp_idx, insts, _) = acc in
+     (cont_label, brk_label, tmp_idx, insts, LArrayElems (val_type, List.rev values))
+  | ArrayInit (t, exp) -> Error "Unimplemented"
   | Assignment (t, name, rexpr) ->
      let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
        codegen_expr acc rexpr
@@ -650,14 +716,20 @@ let rec codegen_expr acc expr =
      let new_inst = (res, Ext (at, v, bt)) in
      (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
 
-  | GetElemPtr (val_type, ptr_type, ptr_expr, idx_type, idx_expr) ->
+  | GetElemPtr (val_type, ptr_type, ptr_expr, idxs) ->
      let* acc = codegen_expr acc ptr_expr in
      let (_, _, _, _, ptr_value) = acc in
-     let+ acc = codegen_expr acc idx_expr in
+     let add_idx acc (t, expr) =
+       let (acc, idxs) = acc in
+       let+ acc = codegen_expr acc expr in
+       let (_, _, _, _, idx) = acc in
+       (acc, (t, idx) :: idxs)
+     in
+     let+ (acc, idxs) = Symtab.fold_left_bind add_idx (acc, []) idxs in
      let (cont_label, brk_label, tmp_idx, insts, idx_value) = acc in
      let res = LTemporary tmp_idx in
      let new_inst = (res,
-                     GEP (val_type, ptr_type, ptr_value, idx_type, idx_value)) in
+                     GEP (val_type, ptr_type, ptr_value, List.rev idxs)) in
      (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
 
   | BinOp (t, op, l_expr, r_expr) ->
@@ -853,6 +925,8 @@ let rec codegen_stmt acc stmt =
 let rec serialize_type t = match t with
   | Pointer t -> (serialize_type t) ^ "*"
   | Void -> "void"
+  | Array (len, t) -> "[" ^ (string_of_int len)
+                      ^ " x " ^ (serialize_type t) ^ "]"
 
   (* The Function type is actually a function pointer. *)
   | Function (ats, rt) ->
@@ -870,11 +944,17 @@ let serialize_literal l = match l with
   | Int i -> string_of_int i
   | Float f -> string_of_float f
 
-let serialize_value v = match v with
+let rec serialize_value v = match v with
   | NoValue -> ""
   | LLiteral l -> serialize_literal l
   | LNamed name -> name
   | LTemporary i -> "%__tmp." ^ (string_of_int i)
+  | LArrayElems (t, values) ->
+     let sv v = (serialize_type t) ^ " " ^ (serialize_value v) in
+     "[" ^
+       (String.concat ", " (List.map sv values))
+       ^ "]"
+  | LArrayInit (_, _) -> "unimplemented"
 
 let is_unsigned t = match t with
   | U _ -> true
@@ -891,10 +971,13 @@ let serialize_irt irt_roots =
       | Alloca t -> "alloca " ^ (serialize_type t)
       | Load (lt, t, v) -> "load " ^ (serialize_type lt) ^ ", "
                            ^ (serialize_type t) ^ " " ^ (serialize_value v)
-      | GEP (vt, pt, pv, it, iv) ->
+      | GEP (vt, pt, pv, idxs) ->
+         let serialize_idx (it, iv) =
+           (serialize_type it) ^ " " ^ (serialize_value iv)
+         in
          String.concat " " ["getelementptr"; (serialize_type vt) ^ ",";
                             serialize_type pt; (serialize_value pv) ^ ",";
-                            serialize_type it; serialize_value iv]
+                            String.concat ", " (List.map serialize_idx idxs)]
       | Store (t1, v1, t2, v2) -> String.concat " " ["store";
                                                      serialize_type t1;
                                                      (serialize_value v1) ^ ",";

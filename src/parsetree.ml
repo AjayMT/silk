@@ -8,6 +8,7 @@ type type_ = I8 | I16 | I32 | I64
              | F32 | F64
              | Function of type_ list * type_
              | Pointer of type_ | MutPointer of type_
+             | Array of int * type_
              | Void | Bool | NewType of string
 
 type literal = LI8 of int | LI16 of int | LI32 of int | LI64 of int
@@ -22,6 +23,8 @@ type bin_op = Plus | Minus | Times | Divide | Modulus
 type un_op = UMinus | Not | BitNot | AddressOf | Deref
 
 type expr = Identifier of string | Literal of literal | Assignment of expr * expr
+            | ArrayElems of expr list
+            | ArrayInit of expr * int
             | FunctionCall of expr * expr list
             | TypeCast of type_ * expr
             | BinOp of expr * bin_op * expr

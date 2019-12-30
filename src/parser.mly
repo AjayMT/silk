@@ -67,33 +67,37 @@ top_decl: type_def { TypeDef $1 }
   | func_fwd_decl  { FuncFwdDecl $1 }
 ;
 
-type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
+ident: IDENTIFIER       { $1 }
+  | LPAREN ident RPAREN { $2 }
 ;
 
-val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
-  | VAL IDENTIFIER COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
-  | VAR IDENTIFIER EQ expr SEMICOLON             { VarI ($2, $4) }
-  | VAR IDENTIFIER COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
+type_def: TYPE ident EQ type_ SEMICOLON { ($2, $4) }
 ;
 
-func_fwd_decl: FUNC IDENTIFIER
+val_decl: VAL ident EQ expr SEMICOLON       { ValI ($2, $4) }
+  | VAL ident COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
+  | VAR ident EQ expr SEMICOLON             { VarI ($2, $4) }
+  | VAR ident COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
+;
+
+func_fwd_decl: FUNC ident
 LPAREN argument_list RPAREN COLON type_
 SEMICOLON                                       { ($2, $4, $7, false) }
-  | EXTERN FUNC IDENTIFIER
+  | EXTERN FUNC ident
 LPAREN argument_list RPAREN COLON type_
 SEMICOLON                                       { ($3, $5, $8, true) }
 ;
 
-func_decl: FUNC IDENTIFIER
+func_decl: FUNC ident
 LPAREN argument_list RPAREN COLON type_
 compound_statement                              { ($2, $4, $7, $8) }
 ;
 
 argument_list: _argument_list                   { List.rev $1 }
 ;
-_argument_list:                                 { [] }
-  | IDENTIFIER COLON type_                      { [($1, $3)] }
-  | _argument_list COMMA IDENTIFIER COLON type_ { ($3, $5) :: $1 }
+_argument_list:                            { [] }
+  | ident COLON type_                      { [($1, $3)] }
+  | _argument_list COMMA ident COLON type_ { ($3, $5) :: $1 }
 ;
 
 statement: SEMICOLON              { Empty }
@@ -126,10 +130,12 @@ _block_body: statement    { [$1] }
 
 type_: base_type        { $1 }
   | pointer_type        { $1 }
+  | LBRACKET I32_LITERAL RBRACKET type_ { Array ($2, $4) }
   | IDENTIFIER          { NewType $1 }
   | FUNC
 LPAREN type_list RPAREN
 type_                   { Function ($3, $5) }
+  | LPAREN type_ RPAREN { $2 }
 ;
 
 base_type: I8              { I8 }
@@ -159,15 +165,24 @@ _type_list:                { [] }
 cast_type: base_type        { $1 }
   | pointer_type            { $1 }
   | LPAREN cast_type RPAREN { $2 }
+;
 
 expr: IDENTIFIER                               { Identifier $1 }
   | literal                                    { Literal $1 }
   | LPAREN expr RPAREN                         { $2 }
+
   | LPAREN expr RPAREN LBRACKET expr RBRACKET  { Index ($2, $5) }
   | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
+
   | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
+  | IDENTIFIER LPAREN RPAREN                   { FunctionCall (Identifier $1, []) }
   | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
+  | LPAREN expr RPAREN LPAREN RPAREN           { FunctionCall ($2, []) }
+
   | cast_type LPAREN expr RPAREN               { TypeCast ($1, $3) }
+
+  | LBRACKET expr SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
+  | LBRACKET expr_list RBRACKET                  { ArrayElems $2 }
 
   | expr EQ expr
     { Assignment ($1, $3) }
@@ -220,8 +235,7 @@ expr: IDENTIFIER                               { Identifier $1 }
 
 expr_list: _expr_list     { List.rev $1 }
 ;
-_expr_list:               { [] }
-  | expr                  { [$1] }
+_expr_list: expr          { [$1] }
   | _expr_list COMMA expr { $3 :: $1 }
 ;
 

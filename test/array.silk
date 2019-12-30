@@ -1,0 +1,11 @@
+
+func f(): [i32] {
+  val a = [1, 2, 3, 4];
+  return &a[3];
+}
+
+func main(): i32 {
+  var a = [1, 2, 3, 4];
+  a[2] = 0;
+  return a[2];
+}

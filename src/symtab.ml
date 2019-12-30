@@ -12,6 +12,7 @@ type silktype = I of int
               | F of int
               | Bool | Void
               | Pointer of silktype | MutPointer of silktype
+              | Array of int * silktype
               | Function of (silktype list) * silktype
               | NewType of string * silktype
 
@@ -65,6 +66,8 @@ let rec silktype_of_asttype symtab_stack t = match t with
      let+ t = silktype_of_asttype symtab_stack t in Pointer t
   | Parsetree.MutPointer t ->
      let+ t = silktype_of_asttype symtab_stack t in MutPointer t
+  | Parsetree.Array (len, t) ->
+     let+ t = silktype_of_asttype symtab_stack t in Array (len, t)
   | Parsetree.Function (ats, rt) ->
      let define_arg acc a =
        let+ a = silktype_of_asttype symtab_stack a in
@@ -91,6 +94,7 @@ let rec compare_types a b = match (a, b) with
      (aname = bname) && (compare_types atype btype)
   | (Pointer a, Pointer b) -> compare_types a b
   | (MutPointer a, MutPointer b) -> compare_types a b
+  | (Array (l1, t1), Array (l2, t2)) -> (l1 = l2) && (compare_types t1 t2)
   | (a, b) -> a = b
 
 let check_viable_cast cast_t expr_t = match cast_t with
@@ -127,29 +131,42 @@ let rec eval_expr_type symtab_stack expr = match expr with
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
   | Parsetree.Assignment (lval, e) ->
      let* exprtype = eval_expr_type symtab_stack e in
-     begin match lval with
-     | Parsetree.Identifier (n) ->
-        begin match (find_symtab_stack n symtab_stack) with
-        | Some Value (Var, idtype, _) ->
-           if compare_types idtype exprtype then Ok exprtype
-           else Error ("Error: Mismatched types in assignment of " ^ n)
-        | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
-        | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
-        | None -> Error ("Error: Identifier " ^ n ^ " undefined")
-        end
-     | Parsetree.UnOp (Parsetree.Deref, exp) ->
-        let* ptr_type = eval_expr_type symtab_stack exp in
-        begin match ptr_type with
-        | Pointer _ -> Error "Error: Cannot write immutable pointer"
-        | MutPointer vt ->
-           if compare_types vt exprtype then Ok exprtype
-           else Error ("Error: Mismatched types in pointer assignment")
-        | _ -> Error "Error: Incorrect type for unary operation"
-        end
-     (* TODO *)
-     | Parsetree.Index (array, idx) -> Error "Unimplemented"
-     | _ -> Error "Error: Invalid lvalue expression"
-     end
+     let rec check_lval lval expected_type = match lval with
+       | Parsetree.Identifier (n) ->
+          begin match (find_symtab_stack n symtab_stack) with
+          | Some Value (Var, idtype, _) ->
+             if compare_types idtype expected_type then Ok expected_type
+             else Error ("Error: Mismatched types in assignment of " ^ n)
+          | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
+          | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
+          | None -> Error ("Error: Identifier " ^ n ^ " undefined")
+          end
+       | Parsetree.UnOp (Parsetree.Deref, exp) ->
+          let* ptr_type = eval_expr_type symtab_stack exp in
+          begin match ptr_type with
+          | Pointer _ -> Error "Error: Cannot write immutable pointer"
+          | MutPointer vt ->
+             if compare_types vt expected_type then Ok expected_type
+             else Error "Error: Mismatched types in pointer assignment"
+          | _ -> Error "Error: Incorrect type for unary operation"
+          end
+       | Parsetree.Index (array, idx) ->
+          let* array_type = eval_expr_type symtab_stack array in
+          let* idx_type = eval_expr_type symtab_stack idx in
+          begin match idx_type with
+          | I _ | U _ ->
+             begin match array_type with
+             | Array (_, elem_type) ->
+                if compare_types elem_type expected_type
+                then check_lval array array_type
+                else Error "Error: Mismatched types in array element assignment"
+             | _ -> Error "Error: Cannot index non-array type"
+             end
+          | _ -> Error "Error: Array index must be integer type"
+          end
+       | _ -> Error "Error: Invalid lvalue expression"
+     in
+     check_lval lval exprtype
   | Parsetree.TypeCast (t, expr) ->
      let* expr_t = eval_expr_type symtab_stack expr in
      let* cast_t = silktype_of_asttype symtab_stack t in
@@ -232,6 +249,30 @@ let rec eval_expr_type symtab_stack expr = match expr with
            | _ -> err
            end
         | Parsetree.UnOp (Parsetree.Deref, exp) -> eval_expr_type symtab_stack exp
+        | Parsetree.Index (array, _) ->
+           let rec check_mutable exp = match exp with
+             | Parsetree.Identifier name ->
+                let v = find_symtab_stack name symtab_stack in
+                begin match v with
+                | Some (Value (Var, _, _)) -> Ok true
+                | Some (Value (Val, _, _)) -> Ok false
+                | _ -> err
+                end
+             | Parsetree.UnOp (Parsetree.Deref, exp) ->
+                let* t = eval_expr_type symtab_stack exp in
+                begin match t with
+                | MutPointer _ -> Ok true
+                | Pointer _ -> Ok false
+                | _ -> err
+                end
+             | Parsetree.Index (array, _) -> check_mutable array
+             | _ -> Error "Error: Invalid operand type for 'address' operator"
+           in
+           let+ mut = check_mutable array in
+           begin match mut with
+           | true -> MutPointer t
+           | false -> Pointer t
+           end
         | _ -> Error "Error: Invalid operand type for 'address' operator"
         end
      | Parsetree.Deref ->
@@ -241,8 +282,32 @@ let rec eval_expr_type symtab_stack expr = match expr with
         | _ -> err
         end
      end
-  (* TODO *)
-  | Parsetree.Index (array, idx) -> Ok (I 32)
+
+  | Parsetree.ArrayElems [] -> Error "Error: Empty array initializer"
+  | Parsetree.ArrayElems (head :: tail) ->
+     let check_elem acc elem =
+       let* elem_type = eval_expr_type symtab_stack elem in
+       if compare_types acc elem_type then Ok elem_type
+       else Error "Error: Mismatched types in array initializer"
+     in
+     let* head_type = eval_expr_type symtab_stack head in
+     let+ elem_type = fold_left_bind check_elem head_type tail in
+     Array (List.length (head :: tail), elem_type)
+  | Parsetree.ArrayInit (exp, len) ->
+     let* elem_type = eval_expr_type symtab_stack exp in
+     if len < 0 then Error "Error: Negative array length"
+     else Ok (Array (len, elem_type))
+  | Parsetree.Index (array, idx) ->
+     let* array_type = eval_expr_type symtab_stack array in
+     let* idx_type = eval_expr_type symtab_stack idx in
+     begin match idx_type with
+     | I _ | U _ ->
+        begin match array_type with
+        | Array (_, elem_type) -> Ok elem_type
+        | _ -> Error "Error: Cannot index non-array type"
+        end
+     | _ -> Error "Error: Array index must be integer type"
+     end
 
 let trav_valdecl symtab symtab_stack types_tab vd =
   let check_inferred_type mut ident expr =
