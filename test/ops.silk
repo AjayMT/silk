@@ -1,6 +1,0 @@
-
-func a(a: i32): i32 {
-  var b = 1;
-  b <<= a;
-  return b;
-}

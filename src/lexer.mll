@@ -176,6 +176,7 @@ U64_LITERAL (int_of_string
 | ":"         { COLON }
 | ";"         { SEMICOLON }
 | ","         { COMMA }
+| "$"         { POINTER }
 | "@"         { DEREF }
 | ">>"        { RSHIFT }
 | "<<"        { LSHIFT }

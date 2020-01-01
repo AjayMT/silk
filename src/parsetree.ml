@@ -24,7 +24,7 @@ type un_op = UMinus | Not | BitNot | AddressOf | Deref
 
 type expr = Identifier of string | Literal of literal | Assignment of expr * expr
             | ArrayElems of expr list
-            | ArrayInit of expr * int
+            | ArrayInit of type_ * int
             | FunctionCall of expr * expr list
             | TypeCast of type_ * expr
             | BinOp of expr * bin_op * expr

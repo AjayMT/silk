@@ -266,14 +266,11 @@ let rec eval_expr_type symtab_stack expr = match expr with
                 | _ -> err
                 end
              | Parsetree.Index (array, _) -> check_mutable array
-             | _ -> Error "Error: Invalid operand type for 'address' operator"
+             | _ -> Error "Error: Cannot get address of temporary value"
            in
            let+ mut = check_mutable array in
-           begin match mut with
-           | true -> MutPointer t
-           | false -> Pointer t
-           end
-        | _ -> Error "Error: Invalid operand type for 'address' operator"
+           if mut then MutPointer t else Pointer t
+        | _ -> Error "Error: Cannot get address of temporary value"
         end
      | Parsetree.Deref ->
         begin match t with
@@ -293,10 +290,10 @@ let rec eval_expr_type symtab_stack expr = match expr with
      let* head_type = eval_expr_type symtab_stack head in
      let+ elem_type = fold_left_bind check_elem head_type tail in
      Array (List.length (head :: tail), elem_type)
-  | Parsetree.ArrayInit (exp, len) ->
-     let* elem_type = eval_expr_type symtab_stack exp in
+  | Parsetree.ArrayInit (t, len) ->
+     let* t = silktype_of_asttype symtab_stack t in
      if len < 0 then Error "Error: Negative array length"
-     else Ok (Array (len, elem_type))
+     else Ok (Array (len, t))
   | Parsetree.Index (array, idx) ->
      let* array_type = eval_expr_type symtab_stack array in
      let* idx_type = eval_expr_type symtab_stack idx in

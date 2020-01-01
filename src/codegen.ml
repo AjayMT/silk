@@ -23,7 +23,7 @@ type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
              | ArrayElems of llvm_type * ir_expr list
-             | ArrayInit of llvm_type * ir_expr
+             | ArrayInit of llvm_type
              | Assignment of llvm_type * string * ir_expr
              | Write of llvm_type * ir_expr * ir_expr
              | FunctionCall of llvm_type * ir_expr * llvm_type list * ir_expr list
@@ -58,13 +58,15 @@ type ir_root = StaticDecl of llvm_type * string * ir_literal
 type llvm_value = LTemporary of int
                 | LNamed of string
                 | LLiteral of ir_literal
-                | LArrayElems of llvm_type * llvm_value list
-                | LArrayInit of int * llvm_value
+                | LZeroInit
+                | LUndef
                 | NoValue
 type llvm_inst = Alloca of llvm_type
                | Load of llvm_type * llvm_type * llvm_value
                | GEP of llvm_type * llvm_type * llvm_value
                         * (llvm_type * llvm_value) list
+               | InsertValue of llvm_type * llvm_value * llvm_type * llvm_value
+                                * int
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
                | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
@@ -154,7 +156,7 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | Trunc (_, _, t) -> t
   | Ext (_, _, t) -> t
   | ArrayElems (t, _) -> t
-  | ArrayInit (t, _) -> t
+  | ArrayInit t -> t
   | GetElemPtr (_, pt, _, idxs) ->
      let get_elem_type t _ = match t with
        | Array (_, t) -> t
@@ -364,10 +366,9 @@ let construct_ir_tree ast symtab =
        let+ elems = Symtab.fold_left_bind check_elem [] elems in
        let elem_type = get_ir_expr_type (List.hd elems) in
        ArrayElems (Array (List.length elems, elem_type), List.rev elems)
-    | Parsetree.ArrayInit (exp, len) ->
-       let+ elem = map_expr scope_map symtab_stack exp in
-       let elem_type = get_ir_expr_type elem in
-       ArrayInit (Array (len, elem_type), elem)
+    | Parsetree.ArrayInit (t, len) ->
+       let* t = Symtab.silktype_of_asttype symtab_stack t in
+       Ok (ArrayInit (Array (len, llvm_type_of_silktype t)))
     | Parsetree.Index (array_exp, idx_exp) ->
        let* array = map_expr scope_map symtab_stack array_exp in
        let* idx = map_expr scope_map symtab_stack idx_exp in
@@ -616,23 +617,26 @@ let rec codegen_expr acc expr =
      end
   | ParamIdentifier (t, name) ->
      Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
-  | Literal (t, lit) ->
-     Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
+  | Literal (t, lit) -> Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
   | ArrayElems (t, exprs) ->
      let* val_type = match t with
        | Array (_, t) -> Ok t
        | _ -> Error "WTF"
      in
-     let add_value acc expr =
-       let (acc, values) = acc in
+     let insert_value acc expr =
+       let (acc, idx) = acc in
+       let (_, _, _, _, array_value) = acc in
        let+ acc = codegen_expr acc expr in
-       let (_, _, _, _, value) = acc in
-       (acc, value :: values)
+       let (cont_label, brk_label, tmp_idx, insts, exp_value) = acc in
+       let res = LTemporary tmp_idx in
+       let new_inst =
+         (res, InsertValue (t, array_value, val_type, exp_value, idx))
+       in
+       ((cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res), idx + 1)
      in
-     let+ (acc, values) = Symtab.fold_left_bind add_value (acc, []) exprs in
-     let (cont_label, brk_label, tmp_idx, insts, _) = acc in
-     (cont_label, brk_label, tmp_idx, insts, LArrayElems (val_type, List.rev values))
-  | ArrayInit (t, exp) -> Error "Unimplemented"
+     let acc = (cont_label, brk_label, tmp_idx, insts, LUndef) in
+     let+ (acc, _) = Symtab.fold_left_bind insert_value (acc, 0) exprs in acc
+  | ArrayInit t -> Ok (cont_label, brk_label, tmp_idx, insts, LZeroInit)
   | Assignment (t, name, rexpr) ->
      let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
        codegen_expr acc rexpr
@@ -765,7 +769,8 @@ let rec codegen_expr acc expr =
         begin match expr with
         | Identifier (_, name) ->
            Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
-        | _ -> Error "Error: Invalid operand type for 'address' operator"
+        | UnOp (_, Deref, expr) -> codegen_expr acc expr
+        | _ -> Error "Error: Cannot get address of temporary value"
         end
      | _ ->
         let+ acc = codegen_expr acc expr in
@@ -949,12 +954,8 @@ let rec serialize_value v = match v with
   | LLiteral l -> serialize_literal l
   | LNamed name -> name
   | LTemporary i -> "%__tmp." ^ (string_of_int i)
-  | LArrayElems (t, values) ->
-     let sv v = (serialize_type t) ^ " " ^ (serialize_value v) in
-     "[" ^
-       (String.concat ", " (List.map sv values))
-       ^ "]"
-  | LArrayInit (_, _) -> "unimplemented"
+  | LUndef -> "undef"
+  | LZeroInit -> "zeroinitializer"
 
 let is_unsigned t = match t with
   | U _ -> true
@@ -978,6 +979,11 @@ let serialize_irt irt_roots =
          String.concat " " ["getelementptr"; (serialize_type vt) ^ ",";
                             serialize_type pt; (serialize_value pv) ^ ",";
                             String.concat ", " (List.map serialize_idx idxs)]
+      | InsertValue (at, av, it, iv, idx) ->
+         String.concat " " ["insertvalue"; serialize_type at;
+                            (serialize_value av) ^ ",";
+                            serialize_type it; (serialize_value iv) ^ ",";
+                            string_of_int idx]
       | Store (t1, v1, t2, v2) -> String.concat " " ["store";
                                                      serialize_type t1;
                                                      (serialize_value v1) ^ ",";

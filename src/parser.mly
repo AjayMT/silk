@@ -25,7 +25,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token ASTERISK SLASH PERCENT
 %token UMINUS
 %token ADDRESSOF
-%token DEREF
+%token POINTER DEREF
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA COLON SEMICOLON
 %token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE
@@ -33,16 +33,15 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
 
-
 %nonassoc EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
 ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %left RSHIFT LSHIFT BIT_AND BIT_OR BIT_XOR
-%nonassoc BIT_NOT
-%nonassoc NOT
 %left AND OR
 %nonassoc EQUAL NOTEQUAL LESSTHAN GREATERTHAN LESSTHANEQUAL GREATERTHANEQUAL
 %left PLUS MINUS
 %left ASTERISK SLASH PERCENT
+%nonassoc BIT_NOT
+%nonassoc NOT
 %nonassoc UMINUS
 %nonassoc ADDRESSOF
 %nonassoc DEREF
@@ -67,37 +66,33 @@ top_decl: type_def { TypeDef $1 }
   | func_fwd_decl  { FuncFwdDecl $1 }
 ;
 
-ident: IDENTIFIER       { $1 }
-  | LPAREN ident RPAREN { $2 }
+type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
 ;
 
-type_def: TYPE ident EQ type_ SEMICOLON { ($2, $4) }
+val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
+  | VAL IDENTIFIER COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
+  | VAR IDENTIFIER EQ expr SEMICOLON             { VarI ($2, $4) }
+  | VAR IDENTIFIER COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
 ;
 
-val_decl: VAL ident EQ expr SEMICOLON       { ValI ($2, $4) }
-  | VAL ident COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
-  | VAR ident EQ expr SEMICOLON             { VarI ($2, $4) }
-  | VAR ident COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
-;
-
-func_fwd_decl: FUNC ident
+func_fwd_decl: FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
 SEMICOLON                                       { ($2, $4, $7, false) }
-  | EXTERN FUNC ident
+  | EXTERN FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
 SEMICOLON                                       { ($3, $5, $8, true) }
 ;
 
-func_decl: FUNC ident
+func_decl: FUNC IDENTIFIER
 LPAREN argument_list RPAREN COLON type_
 compound_statement                              { ($2, $4, $7, $8) }
 ;
 
 argument_list: _argument_list                   { List.rev $1 }
 ;
-_argument_list:                            { [] }
-  | ident COLON type_                      { [($1, $3)] }
-  | _argument_list COMMA ident COLON type_ { ($3, $5) :: $1 }
+_argument_list:                                 { [] }
+  | IDENTIFIER COLON type_                      { [($1, $3)] }
+  | _argument_list COMMA IDENTIFIER COLON type_ { ($3, $5) :: $1 }
 ;
 
 statement: SEMICOLON              { Empty }
@@ -152,8 +147,8 @@ base_type: I8              { I8 }
   | VOID                   { Void }
 ;
 
-pointer_type: LBRACKET type_ RBRACKET { Pointer $2 }
-  | LBRACKET MUT type_ RBRACKET       { MutPointer $3 }
+pointer_type: POINTER type_ { Pointer $2 }
+  | MUT POINTER type_       { MutPointer $3 }
 
 type_list: _type_list      { List.rev $1 }
 ;
@@ -167,22 +162,22 @@ cast_type: base_type        { $1 }
   | LPAREN cast_type RPAREN { $2 }
 ;
 
-expr: IDENTIFIER                               { Identifier $1 }
-  | literal                                    { Literal $1 }
-  | LPAREN expr RPAREN                         { $2 }
+indexable_expr: IDENTIFIER { Identifier $1 }
+  | literal                { Literal $1 }
+  | LPAREN expr RPAREN     { $2 }
 
-  | LPAREN expr RPAREN LBRACKET expr RBRACKET  { Index ($2, $5) }
-  | IDENTIFIER LBRACKET expr RBRACKET          { Index (Identifier $1, $3) }
+  | indexable_expr LBRACKET expr RBRACKET         { Index ($1, $3) }
 
-  | IDENTIFIER LPAREN expr_list RPAREN         { FunctionCall (Identifier $1, $3) }
-  | IDENTIFIER LPAREN RPAREN                   { FunctionCall (Identifier $1, []) }
-  | LPAREN expr RPAREN LPAREN expr_list RPAREN { FunctionCall ($2, $5) }
-  | LPAREN expr RPAREN LPAREN RPAREN           { FunctionCall ($2, []) }
+  | LBRACKET type_ SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
+  | LBRACKET expr_list RBRACKET                   { ArrayElems $2 }
 
-  | cast_type LPAREN expr RPAREN               { TypeCast ($1, $3) }
+  | indexable_expr LPAREN expr_list RPAREN        { FunctionCall ($1, $3) }
+  | indexable_expr LPAREN RPAREN                  { FunctionCall ($1, []) }
 
-  | LBRACKET expr SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
-  | LBRACKET expr_list RBRACKET                  { ArrayElems $2 }
+  | cast_type LPAREN expr RPAREN { TypeCast ($1, $3) }
+;
+
+expr: indexable_expr { $1 }
 
   | expr EQ expr
     { Assignment ($1, $3) }
@@ -228,9 +223,9 @@ expr: IDENTIFIER                               { Identifier $1 }
 
   | MINUS expr %prec UMINUS      { UnOp (UMinus, $2) }
   | NOT expr                     { UnOp (Not, $2) }
-  | DEREF expr                   { UnOp (Deref, $2) }
   | BIT_NOT expr                 { UnOp (BitNot, $2) }
   | BIT_AND expr %prec ADDRESSOF { UnOp (AddressOf, $2) }
+  | DEREF expr                   { UnOp (Deref, $2) }
 ;
 
 expr_list: _expr_list     { List.rev $1 }
