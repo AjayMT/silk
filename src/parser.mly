@@ -162,22 +162,21 @@ cast_type: base_type        { $1 }
   | LPAREN cast_type RPAREN { $2 }
 ;
 
-indexable_expr: IDENTIFIER { Identifier $1 }
-  | literal                { Literal $1 }
-  | LPAREN expr RPAREN     { $2 }
+non_bin_expr: IDENTIFIER { Identifier $1 }
+  | literal              { Literal $1 }
+  | LPAREN expr RPAREN   { $2 }
 
-  | indexable_expr LBRACKET expr RBRACKET         { Index ($1, $3) }
-
+  | non_bin_expr LBRACKET expr RBRACKET           { Index ($1, $3) }
   | LBRACKET type_ SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
   | LBRACKET expr_list RBRACKET                   { ArrayElems $2 }
 
-  | indexable_expr LPAREN expr_list RPAREN        { FunctionCall ($1, $3) }
-  | indexable_expr LPAREN RPAREN                  { FunctionCall ($1, []) }
+  | non_bin_expr LPAREN expr_list RPAREN { FunctionCall ($1, $3) }
+  | non_bin_expr LPAREN RPAREN           { FunctionCall ($1, []) }
 
   | cast_type LPAREN expr RPAREN { TypeCast ($1, $3) }
 ;
 
-expr: indexable_expr { $1 }
+expr: non_bin_expr { $1 }
 
   | expr EQ expr
     { Assignment ($1, $3) }

@@ -178,19 +178,22 @@ let rec eval_expr_type symtab_stack expr = match expr with
          let match_types acc t exp =
            let* _ = acc in
            let check_arg_type et =
-             if compare_types et t then Ok t
-             else Error ("Error: Mismatched types in function call")
+             let (a, b) = match (t, et) with
+               | (Pointer a, MutPointer b) -> (a, b)
+               | (a, b) -> (a, b) in
+             if compare_types a b then Ok t
+             else Error "Error: Mismatched types in function call"
            in
            Result.bind (eval_expr_type symtab_stack exp) check_arg_type
          in
          if List.length argtypes = List.length args then
            List.fold_left2 match_types (Ok Bool) argtypes exprs
-         else Error ("Error: Incorrect number of arguments")
+         else Error "Error: Incorrect number of arguments"
        in
        let check_function_type stype = match stype with
          | Function (argtypes, t) ->
             let+ _ = match_arg_types argtypes args in t
-         | _ -> Error ("Error: Expression is not a function")
+         | _ -> Error "Error: Expression is not a function"
        in
        Result.bind (eval_expr_type symtab_stack f) check_function_type
      end
