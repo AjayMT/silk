@@ -9,7 +9,7 @@ let hexadecimalDigit = ['0'-'9' 'a'-'f']
 let octalDigit = ['0'-'7']
 let leadingChar = ['a'-'z' 'A'-'Z']
 let nonleadingChar = ['a'-'z' 'A'-'Z' '_' '0'-'9']
-let whitespace = [' ' '\t' '\n']
+let whitespace = [' ' '\t']
 
 rule token = parse
 | "type"      { TYPE }
@@ -39,6 +39,7 @@ rule token = parse
 | "bool"      { BOOL }
 | "true"      { TRUE }
 | "false"     { FALSE }
+| "struct"    { STRUCT }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
 
 | decimalDigit+ "." decimalDigit+ "f" as f32_literal {
@@ -176,6 +177,7 @@ U64_LITERAL (int_of_string
 | ":"         { COLON }
 | ";"         { SEMICOLON }
 | ","         { COMMA }
+| "."         { DOT }
 | "$"         { POINTER }
 | "@"         { DEREF }
 | ">>"        { RSHIFT }
@@ -215,6 +217,8 @@ U64_LITERAL (int_of_string
 | "}"         { RCURLY }
 | "["         { LBRACKET }
 | "]"         { RBRACKET }
+| "//" [^ '\n']* '\n' { token lexbuf }
 | whitespace+ { token lexbuf }
+| '\n'        { token lexbuf }
 | eof         { EOF }
 | _           { raise (SyntaxError (string_of_int lexbuf.lex_curr_pos)) }

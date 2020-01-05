@@ -10,6 +10,8 @@ type llvm_type = I of int
                | F of int
                | Pointer of llvm_type
                | Array of int * llvm_type
+               | Struct of llvm_type list
+               | StructLabeled of (string * llvm_type) list
                | Function of llvm_type list * llvm_type
                | Void
 
@@ -22,6 +24,7 @@ type ir_un_op = UMinus | Not | AddressOf | Deref
 type ir_expr = Identifier of llvm_type * string
              | ParamIdentifier of llvm_type * string
              | Literal of llvm_type * ir_literal
+             | StructLiteral of llvm_type * ir_expr list
              | ArrayElems of llvm_type * ir_expr list
              | ArrayInit of llvm_type
              | Assignment of llvm_type * string * ir_expr
@@ -36,6 +39,9 @@ type ir_expr = Identifier of llvm_type * string
              | ItoP of llvm_type * ir_expr * llvm_type
              | Trunc of llvm_type * ir_expr * llvm_type
              | Ext of llvm_type * ir_expr * llvm_type
+             | Label of llvm_type * ir_expr
+             | Unlabel of llvm_type * ir_expr
+             | StructAccess of llvm_type * ir_expr * int
              | GetElemPtr of llvm_type * llvm_type * ir_expr
                              * (llvm_type * ir_expr) list
 type ir_decl = llvm_type * string * ir_expr
@@ -67,6 +73,7 @@ type llvm_inst = Alloca of llvm_type
                         * (llvm_type * llvm_value) list
                | InsertValue of llvm_type * llvm_value * llvm_type * llvm_value
                                 * int
+               | ExtractValue of llvm_type * llvm_value * int
                | Store of llvm_type * llvm_value * llvm_type * llvm_value
                | Call of llvm_type * llvm_value * (llvm_type * llvm_value) list
                | Ret of llvm_type * llvm_value
@@ -120,7 +127,16 @@ let rec llvm_type_of_silktype t =
   | Symtab.Pointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.Array (len, t) -> Array (len, llvm_type_of_silktype t)
-  | Symtab.NewType (_, t) -> llvm_type_of_silktype t
+  | Symtab.TypeAlias (_, t) -> llvm_type_of_silktype t
+  | Symtab.Struct types -> Struct (List.map llvm_type_of_silktype types)
+  | Symtab.StructLabeled pairs ->
+     let (names, types) = List.split pairs in
+     StructLabeled (List.combine names (List.map llvm_type_of_silktype types))
+
+let discard_labels t = match t with
+  | StructLabeled pairs ->
+     let (_, types) = List.split pairs in Struct types
+  | _ -> t
 
 (* TODO binops, other things *)
 let resolve_literal l = match l with
@@ -157,6 +173,15 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | Ext (_, _, t) -> t
   | ArrayElems (t, _) -> t
   | ArrayInit t -> t
+  | Label (t, _) -> t
+  | Unlabel (t, _) -> t
+  | StructLiteral (t, _) -> t
+  | StructAccess (t, _, i) ->
+     begin match t with
+     | Struct l -> List.nth l i
+     | StructLabeled l -> (fun (_, t) -> t) @@ List.nth l i
+     | _ -> t
+     end
   | GetElemPtr (_, pt, _, idxs) ->
      let get_elem_type t _ = match t with
        | Array (_, t) -> t
@@ -192,6 +217,8 @@ let construct_ir_tree ast symtab =
        | Some v -> Some v
        | None -> find_symtab_stack name zs
   in
+
+  let types_tab = symtab in
 
   let rec map_expr scope_map symtab_stack expr =
     match expr with
@@ -249,7 +276,7 @@ let construct_ir_tree ast symtab =
        | _ -> Error "Error: Invalid lvalue expression"
        end
     | Parsetree.TypeCast (type_, expr) ->
-       let* silktype = Symtab.silktype_of_asttype symtab_stack type_ in
+       let* silktype = Symtab.silktype_of_asttype [types_tab] type_ in
        let+ ir_expr = map_expr scope_map symtab_stack expr in
        let casttype = llvm_type_of_silktype silktype in
        let ir_expr_type = get_ir_expr_type ir_expr in
@@ -283,19 +310,41 @@ let construct_ir_tree ast symtab =
           | Pointer s when t <> s -> BitCast (ir_expr_type, ir_expr, casttype)
           | _ -> ir_expr
           end
+       | Struct _ ->
+          begin match ir_expr_type with
+          | Struct _ -> ir_expr
+          | StructLabeled _ -> Unlabel (casttype, ir_expr)
+          | _ -> StructLiteral (casttype, [ir_expr])
+          end
+       | StructLabeled _ ->
+          begin match ir_expr_type with
+          | Struct _ | StructLabeled _ -> Label (casttype, ir_expr)
+          | _ -> StructLiteral (casttype, [ir_expr])
+          end
        | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        end
     | Parsetree.FunctionCall (fexp, argexps) ->
-       let* ir_fexp = map_expr scope_map symtab_stack fexp in
-       begin match (get_ir_expr_type ir_fexp) with
-       | Function (argtypes, rettype) ->
-          let add_arg args ar_exp =
-            let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
-            ir_argexp :: args
-          in
-          let+ args = Symtab.fold_left_bind add_arg [] argexps in
-          FunctionCall (rettype, ir_fexp, argtypes, args)
-       | _ -> Error "Error: Not a function"
+       let map_ir_fexp ir_fexp = match (get_ir_expr_type ir_fexp) with
+         | Function (argtypes, rettype) ->
+            let add_arg args ar_exp =
+              let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
+              ir_argexp :: args
+            in
+            let+ args = Symtab.fold_left_bind add_arg [] argexps in
+            FunctionCall (rettype, ir_fexp, argtypes, args)
+         | _ -> Error "Error: Not a function"
+       in
+       begin match map_expr scope_map symtab_stack fexp with
+       | Ok e -> map_ir_fexp e
+       | Error e ->
+          begin match fexp with
+          | Parsetree.Identifier t ->
+             if List.length argexps <> 1 then
+               Error "Error: Invalid type cast expression"
+             else map_expr scope_map symtab_stack
+                    (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd argexps))
+          | _ -> Error e
+          end
        end
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
        let* l = map_expr scope_map symtab_stack lexp_ in
@@ -357,6 +406,31 @@ let construct_ir_tree ast symtab =
           end
        | _ -> UnOp (t, o, ir_expr)
        end
+
+    | Parsetree.StructLiteral elems ->
+       let check_elem acc elem =
+         let+ exp = map_expr scope_map symtab_stack elem in
+         exp :: acc
+       in
+       let+ elems = Symtab.fold_left_bind check_elem [] elems in
+       let elems = List.rev elems in
+       let types = List.map get_ir_expr_type elems in
+       StructLiteral (Struct types, elems)
+    | Parsetree.StructIndexAccess (exp, idx) ->
+       let+ expr = map_expr scope_map symtab_stack exp in
+       StructAccess (get_ir_expr_type expr, expr, idx)
+    | Parsetree.StructMemberAccess (exp, name) ->
+       let* expr = map_expr scope_map symtab_stack exp in
+       let expr_type = get_ir_expr_type expr in
+       let rec find_member l e i = match l with
+         | [] -> -1
+         | (n, t) :: tl -> if n = e then i else find_member tl e (i + 1)
+       in
+       let+ t = match expr_type with
+         | StructLabeled l -> Ok l
+         | _ -> Error "Error: Cannot access member of non-labeledstruct type"
+       in
+       StructAccess (expr_type, expr, find_member t name 0)
 
     | Parsetree.ArrayElems elems ->
        let check_elem acc elem =
@@ -637,6 +711,34 @@ let rec codegen_expr acc expr =
      let acc = (cont_label, brk_label, tmp_idx, insts, LUndef) in
      let+ (acc, _) = Symtab.fold_left_bind insert_value (acc, 0) exprs in acc
   | ArrayInit t -> Ok (cont_label, brk_label, tmp_idx, insts, LZeroInit)
+  | StructLiteral (struct_t, exprs) ->
+     let* val_types = match (discard_labels struct_t) with
+       | Struct l -> Ok l
+       | _ -> Error "WTF"
+     in
+     let insert_value acc t expr =
+       let* acc = acc in
+       let (acc, idx) = acc in
+       let (_, _, _, _, struct_value) = acc in
+       let+ acc = codegen_expr acc expr in
+       let (cont_label, brk_label, tmp_idx, insts, exp_value) = acc in
+       let res = LTemporary tmp_idx in
+       let new_inst =
+         (res, InsertValue (struct_t, struct_value, t, exp_value, idx))
+       in
+       ((cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res), idx + 1)
+     in
+     let acc = (cont_label, brk_label, tmp_idx, insts, LUndef) in
+     let+ (acc, _) = List.fold_left2 insert_value (Ok (acc, 0)) val_types exprs in
+     acc
+  | StructAccess (t, expr, idx) ->
+     let+ acc = codegen_expr acc expr in
+     let (cont_label, brk_label, tmp_idx, insts, struct_value) = acc in
+     let res = LTemporary tmp_idx in
+     let new_inst = (res, ExtractValue (t, struct_value, idx)) in
+     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+  | Label (_, expr) -> codegen_expr acc expr
+  | Unlabel (_, expr) -> codegen_expr acc expr
   | Assignment (t, name, rexpr) ->
      let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
        codegen_expr acc rexpr
@@ -932,6 +1034,9 @@ let rec serialize_type t = match t with
   | Void -> "void"
   | Array (len, t) -> "[" ^ (string_of_int len)
                       ^ " x " ^ (serialize_type t) ^ "]"
+  | Struct ts ->
+     "{" ^ (String.concat ", " (List.map serialize_type ts)) ^ "}"
+  | StructLabeled pairs -> serialize_type @@ discard_labels t
 
   (* The Function type is actually a function pointer. *)
   | Function (ats, rt) ->
@@ -984,6 +1089,9 @@ let serialize_irt irt_roots =
                             (serialize_value av) ^ ",";
                             serialize_type it; (serialize_value iv) ^ ",";
                             string_of_int idx]
+      | ExtractValue (t, v, i) ->
+         String.concat " " ["extractvalue"; serialize_type t;
+                            (serialize_value v) ^ ","; string_of_int i]
       | Store (t1, v1, t2, v2) -> String.concat " " ["store";
                                                      serialize_type t1;
                                                      (serialize_value v1) ^ ",";

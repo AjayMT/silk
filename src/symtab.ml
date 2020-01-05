@@ -13,8 +13,10 @@ type silktype = I of int
               | Bool | Void
               | Pointer of silktype | MutPointer of silktype
               | Array of int * silktype
+              | Struct of silktype list
+              | StructLabeled of (string * silktype) list
               | Function of (silktype list) * silktype
-              | NewType of string * silktype
+              | TypeAlias of string * silktype
 
 type symbol = Value of valness * silktype * symbol SymtabM.t option
             | Type of silktype
@@ -68,6 +70,21 @@ let rec silktype_of_asttype symtab_stack t = match t with
      let+ t = silktype_of_asttype symtab_stack t in MutPointer t
   | Parsetree.Array (len, t) ->
      let+ t = silktype_of_asttype symtab_stack t in Array (len, t)
+  | Parsetree.Struct types ->
+     let add_type acc t =
+       let+ t = silktype_of_asttype symtab_stack t in
+       t :: acc
+     in
+     let+ types = fold_left_bind add_type [] types in
+     Struct (List.rev types)
+  | Parsetree.StructLabeled members ->
+     let (names, types) = List.split members in
+     let add_type acc t =
+       let+ t = silktype_of_asttype symtab_stack t in
+       t :: acc
+     in
+     let+ types = fold_left_bind add_type [] types in
+     StructLabeled (List.combine names (List.rev types))
   | Parsetree.Function (ats, rt) ->
      let define_arg acc a =
        let+ a = silktype_of_asttype symtab_stack a in
@@ -77,12 +94,16 @@ let rec silktype_of_asttype symtab_stack t = match t with
      let args = List.rev args_rev in
      let+ rt = silktype_of_asttype symtab_stack rt in
      Function (args, rt)
-  | Parsetree.NewType (name) ->
+  | Parsetree.TypeAlias (name) ->
      match find_symtab_stack name symtab_stack with
-     | Some (Type t) -> Ok (NewType (name, t))
+     | Some (Type t) -> Ok (TypeAlias (name, t))
      | Some (Value _) ->
         Error ("Error: " ^ name ^ " is not a type")
      | None -> Error ("Error: type " ^ name ^ " undefined")
+
+let rec resolve_type_alias t = match t with
+  | TypeAlias (_, t) -> resolve_type_alias t
+  | _ -> t
 
 let rec compare_types a b = match (a, b) with
   | (Function (aargtypes, arettype), Function (bargtypes, brettype)) ->
@@ -90,36 +111,80 @@ let rec compare_types a b = match (a, b) with
      List.length aargtypes = List.length bargtypes
      && (List.fold_left2 f true aargtypes bargtypes)
      && (compare_types arettype brettype)
-  | (NewType (aname, atype), NewType (bname, btype)) ->
-     (aname = bname) && (compare_types atype btype)
+  | (TypeAlias (_, a), b) -> compare_types (resolve_type_alias a) b
+  | (a, TypeAlias (_, b)) -> compare_types a (resolve_type_alias b)
   | (Pointer a, Pointer b) -> compare_types a b
   | (MutPointer a, MutPointer b) -> compare_types a b
   | (Array (l1, t1), Array (l2, t2)) -> (l1 = l2) && (compare_types t1 t2)
+  | (Struct a, Struct b) ->
+     if List.length a = List.length b then
+       let results =
+         List.map (fun (a, b) -> compare_types a b) (List.combine a b)
+       in
+       List.fold_left (&&) true results
+     else false
+  | (StructLabeled a, StructLabeled b) ->
+     if List.length a = List.length b then
+       let results =
+         List.map (fun ((an, at), (bn, bt)) -> (compare_types at bt) && an = bn)
+           (List.combine a b)
+       in
+       List.fold_left (&&) true results
+     else false
   | (a, b) -> a = b
 
-let check_viable_cast cast_t expr_t = match cast_t with
+let rec check_viable_cast cast_t expr_t =
+  let err = Error "Error: Invalid type cast" in
+  match cast_t with
   | I _ | U _ ->
      begin match expr_t with
      | I _ | U _ | F _ | MutPointer _ -> Ok ()
-     | _ -> Error "Error: Unviable type cast"
+     | _ -> err
      end
   | F f ->
      begin match expr_t with
      | I _ | U _ | F _ -> Ok ()
-     | _ -> Error "Error: Unviable type cast"
+     | _ -> err
      end
   | Pointer _ ->
      begin match expr_t with
      | Pointer _ -> Ok ()
-     | _ -> Error "Error: Unviable type cast"
+     | _ -> err
      end
   | MutPointer _ ->
      begin match expr_t with
      | I _ | U _ | MutPointer _ -> Ok ()
-     | _ -> Error "Error: Unviable type cast"
+     | _ -> err
      end
+  | Struct a ->
+     begin match expr_t with
+     | StructLabeled b ->
+        let s = Struct (List.map (fun (_, t) -> t) b) in
+        if compare_types cast_t s then Ok () else err
+     | _ ->
+        if List.length a = 1 then
+          if compare_types (List.hd a) expr_t then Ok ()
+          else err
+        else
+          if compare_types cast_t expr_t then Ok ()
+          else err
+     end
+  | StructLabeled a ->
+     begin match expr_t with
+     | Struct b ->
+        let s = Struct (List.map (fun (_, t) -> t) a) in
+        if compare_types expr_t s then Ok () else err
+     | _ ->
+        if List.length a = 1 then
+          if compare_types ((fun (_, t) -> t) (List.hd a)) expr_t then Ok ()
+          else err
+        else
+          if compare_types cast_t expr_t then Ok ()
+          else err
+     end
+  | TypeAlias (_, a) -> check_viable_cast a expr_t
   | _ -> if compare_types cast_t expr_t then Ok ()
-         else Error "Error: Unviable type cast"
+         else err
 
 let rec eval_expr_type symtab_stack expr = match expr with
   | Parsetree.Identifier name ->
@@ -164,6 +229,21 @@ let rec eval_expr_type symtab_stack expr = match expr with
              end
           | _ -> Error "Error: Array index must be integer type"
           end
+       | Parsetree.StructLiteral exprs ->
+          let err = Error "Error: Mismatched types in struct assignment" in
+          let add_lval acc lv et =
+            let* acc = acc in
+            let+ t = check_lval lv et in t
+          in
+          let* valtypes = match exprtype with
+            | Struct l -> if List.length exprs <> List.length l then err
+                          else Ok l
+            | _ -> err
+          in
+          let* lvals = List.fold_left2 add_lval (Ok exprtype) exprs valtypes in
+          let* lval_type = eval_expr_type symtab_stack lval in
+          if compare_types lval_type exprtype then Ok exprtype
+          else err
        | _ -> Error "Error: Invalid lvalue expression"
      in
      check_lval lval exprtype
@@ -173,29 +253,38 @@ let rec eval_expr_type symtab_stack expr = match expr with
      let+ () = check_viable_cast cast_t expr_t in
      cast_t
   | Parsetree.FunctionCall (f, args) ->
-     begin
-       let match_arg_types argtypes exprs =
-         let match_types acc t exp =
-           let* _ = acc in
-           let check_arg_type et =
-             let (a, b) = match (t, et) with
-               | (Pointer a, MutPointer b) -> (a, b)
-               | (a, b) -> (a, b) in
-             if compare_types a b then Ok t
-             else Error "Error: Mismatched types in function call"
-           in
-           Result.bind (eval_expr_type symtab_stack exp) check_arg_type
+     let match_arg_types argtypes exprs =
+       let match_types acc t exp =
+         let* _ = acc in
+         let check_arg_type et =
+           let (a, b) = match (t, et) with
+             | (Pointer a, MutPointer b) -> (a, b)
+             | (a, b) -> (a, b) in
+           if compare_types a b then Ok t
+           else Error "Error: Mismatched types in function call"
          in
-         if List.length argtypes = List.length args then
-           List.fold_left2 match_types (Ok Bool) argtypes exprs
-         else Error "Error: Incorrect number of arguments"
+         Result.bind (eval_expr_type symtab_stack exp) check_arg_type
        in
-       let check_function_type stype = match stype with
-         | Function (argtypes, t) ->
-            let+ _ = match_arg_types argtypes args in t
-         | _ -> Error "Error: Expression is not a function"
-       in
-       Result.bind (eval_expr_type symtab_stack f) check_function_type
+       if List.length argtypes = List.length args then
+         List.fold_left2 match_types (Ok Bool) argtypes exprs
+       else Error "Error: Incorrect number of arguments"
+     in
+     let check_function_type stype = match stype with
+       | Function (argtypes, t) ->
+          let+ _ = match_arg_types argtypes args in t
+       | _ -> Error "Error: Expression is not a function"
+     in
+     begin match (eval_expr_type symtab_stack f) with
+     | Ok t -> check_function_type t
+     | Error e ->
+        begin match f with
+        | Parsetree.Identifier t ->
+           if List.length args <> 1 then
+             Error "Error: Invalid type cast expression"
+           else eval_expr_type symtab_stack
+                  (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd args))
+        | _ -> Error e
+        end
      end
   | Parsetree.BinOp (a, op, b) ->
      let* a_type = eval_expr_type symtab_stack a in
@@ -283,6 +372,14 @@ let rec eval_expr_type symtab_stack expr = match expr with
         end
      end
 
+  | Parsetree.StructLiteral exprs ->
+     let add_expr acc expr =
+       let+ t = eval_expr_type symtab_stack expr in
+       t :: acc
+     in
+     let+ types = fold_left_bind add_expr [] exprs in
+     Struct (List.rev types)
+
   | Parsetree.ArrayElems [] -> Error "Error: Empty array initializer"
   | Parsetree.ArrayElems (head :: tail) ->
      let check_elem acc elem =
@@ -308,6 +405,25 @@ let rec eval_expr_type symtab_stack expr = match expr with
         end
      | _ -> Error "Error: Array index must be integer type"
      end
+  | Parsetree.StructMemberAccess (exp, name) ->
+     let* t = eval_expr_type symtab_stack exp in
+     let* members = match (resolve_type_alias t) with
+       | StructLabeled l -> Ok l
+       | _ -> Error "Error: Cannot access member of non-labeledstruct type"
+     in
+     begin match List.assoc_opt name members with
+     | Some t -> Ok t
+     | None -> Error ("Error: Struct has no member named " ^ name)
+     end
+  | Parsetree.StructIndexAccess (exp, idx) ->
+     let* t = eval_expr_type symtab_stack exp in
+     let* members = match (resolve_type_alias t) with
+       | Struct l -> Ok l
+       | _ -> Error "Error: Cannot access member of non-unlabeledstruct type"
+     in
+     match List.nth_opt members idx with
+     | Some t -> Ok t
+     | None -> Error ("Error: Struct has no member at index " ^ (string_of_int idx))
 
 let trav_valdecl symtab symtab_stack types_tab vd =
   let check_inferred_type mut ident expr =

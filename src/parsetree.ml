@@ -9,7 +9,9 @@ type type_ = I8 | I16 | I32 | I64
              | Function of type_ list * type_
              | Pointer of type_ | MutPointer of type_
              | Array of int * type_
-             | Void | Bool | NewType of string
+             | StructLabeled of (string * type_) list
+             | Struct of type_ list
+             | Void | Bool | TypeAlias of string
 
 type literal = LI8 of int | LI16 of int | LI32 of int | LI64 of int
                | LU8 of int | LU16 of int | LU32 of int | LU64 of int
@@ -23,6 +25,7 @@ type bin_op = Plus | Minus | Times | Divide | Modulus
 type un_op = UMinus | Not | BitNot | AddressOf | Deref
 
 type expr = Identifier of string | Literal of literal | Assignment of expr * expr
+            | StructLiteral of expr list
             | ArrayElems of expr list
             | ArrayInit of type_ * int
             | FunctionCall of expr * expr list
@@ -30,6 +33,8 @@ type expr = Identifier of string | Literal of literal | Assignment of expr * exp
             | BinOp of expr * bin_op * expr
             | UnOp of un_op * expr
             | Index of expr * expr
+            | StructMemberAccess of expr * string
+            | StructIndexAccess of expr * int
 
 type val_decl = ValI of string * expr | Val of string * type_ * expr
                 | VarI of string * expr | Var of string * type_ * expr
