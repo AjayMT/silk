@@ -246,6 +246,7 @@ let construct_ir_tree ast symtab =
        | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
        end
     | Parsetree.Assignment (lval, exp) ->
+       let* rexp = map_expr scope_map symtab_stack exp in
        begin match lval with
        | Parsetree.Identifier (name) ->
           let symbol = find_symtab_stack name symtab_stack in
@@ -253,16 +254,13 @@ let construct_ir_tree ast symtab =
           | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
           | Some (Symtab.Value (_, type_, _)) ->
              let t = llvm_type_of_silktype type_ in
-             let+ ir_exp = map_expr scope_map symtab_stack exp in
-             Assignment (t, ScopeM.find name scope_map, ir_exp)
+             Ok (Assignment (t, ScopeM.find name scope_map, rexp))
           | None -> Error ("Error: Identifier " ^ name ^ " undefined")
           end
        | Parsetree.UnOp (Parsetree.Deref, lexp) ->
-          let* lexp = map_expr scope_map symtab_stack lexp in
-          let+ rexp = map_expr scope_map symtab_stack exp in
+          let+ lexp = map_expr scope_map symtab_stack lexp in
           Write (get_ir_expr_type rexp, lexp, rexp)
        | Parsetree.Index (array_expr, idx_expr) ->
-          let* rexp = map_expr scope_map symtab_stack exp in
           let* array = map_expr scope_map symtab_stack array_expr in
           let+ idx = map_expr scope_map symtab_stack idx_expr in
           let idx_type = get_ir_expr_type idx in
@@ -273,6 +271,11 @@ let construct_ir_tree ast symtab =
                         [(I 32, Literal (I 32, Int 0)); (idx_type, idx)])
           in
           Write (get_ir_expr_type rexp, ptr_exp, rexp)
+       | Parsetree.StructIndexAccess (struct_expr, idx) ->
+          let+ lval = map_expr scope_map symtab_stack lval in
+          Write (get_ir_expr_type rexp,
+                 UnOp (get_ir_expr_type lval, AddressOf, lval),
+                 rexp)
        | _ -> Error "Error: Invalid lvalue expression"
        end
     | Parsetree.TypeCast (type_, expr) ->
@@ -398,12 +401,8 @@ let construct_ir_tree ast symtab =
          | Parsetree.AddressOf -> AddressOf
        in
        let t = get_ir_expr_type ir_expr in
-       begin match o with
-       | AddressOf ->
-          begin match ir_expr with
-          | UnOp (_, Deref, exp) -> exp
-          | _ -> UnOp (t, o, ir_expr)
-          end
+       begin match (o, ir_expr) with
+       | (AddressOf, UnOp (_, Deref, exp)) -> exp
        | _ -> UnOp (t, o, ir_expr)
        end
 
@@ -872,6 +871,19 @@ let rec codegen_expr acc expr =
         | Identifier (_, name) ->
            Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
         | UnOp (_, Deref, expr) -> codegen_expr acc expr
+        | StructAccess (struct_type, struct_expr, idx) ->
+           let rec resolve_addressof expr = match expr with
+             | UnOp (_, Deref, expr) -> Ok expr
+             | StructAccess (struct_type, struct_expr, idx) ->
+                let+ struct_addr = resolve_addressof struct_expr in
+                GetElemPtr (struct_type, Pointer struct_type, struct_addr,
+                            [(I 32, Literal (I 32, Int 0));
+                             (I 32, Literal (I 32, Int idx))])
+             | Identifier _ -> Ok (UnOp (t, AddressOf, expr))
+             | _ -> Error "Error: Cannot get address of temporary value"
+           in
+           let* expr = resolve_addressof expr in
+           codegen_expr acc expr
         | _ -> Error "Error: Cannot get address of temporary value"
         end
      | _ ->

@@ -3,6 +3,7 @@ type s = struct(i32, struct(i32, i32));
 
 func main(): i32 {
   var a = t((1, (2, 3)));
+  a.y.0 = 4;
   var b = a.y.0;
   return b;
 }

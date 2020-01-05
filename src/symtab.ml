@@ -186,7 +186,29 @@ let rec check_viable_cast cast_t expr_t =
   | _ -> if compare_types cast_t expr_t then Ok ()
          else err
 
-let rec eval_expr_type symtab_stack expr = match expr with
+let rec eval_expr_type symtab_stack expr =
+  let rec check_mutable exp = match exp with
+    | Parsetree.Identifier name ->
+       let v = find_symtab_stack name symtab_stack in
+       begin match v with
+       | Some (Value (Var, _, _)) -> Ok true
+       | Some (Value (Val, _, _)) -> Ok false
+       | _ -> Error ("Error: Expected value, found type: " ^ name)
+       end
+    | Parsetree.UnOp (Parsetree.Deref, exp) ->
+       let* t = eval_expr_type symtab_stack exp in
+       begin match t with
+       | MutPointer _ -> Ok true
+       | Pointer _ -> Ok false
+       | _ -> Error "Error: Incorrect type for unary operation"
+       end
+    | Parsetree.Index (array, _) -> check_mutable array
+    | Parsetree.StructIndexAccess (struct_expr, _)
+      | Parsetree.StructMemberAccess (struct_expr, _) -> check_mutable struct_expr
+    | _ -> Error "Error: Cannot get address of temporary value"
+  in
+
+  match expr with
   | Parsetree.Identifier name ->
      begin match find_symtab_stack name symtab_stack with
      | Some (Type _) -> Error ("Error: Expected value, found type: " ^ name)
@@ -196,55 +218,42 @@ let rec eval_expr_type symtab_stack expr = match expr with
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
   | Parsetree.Assignment (lval, e) ->
      let* exprtype = eval_expr_type symtab_stack e in
-     let rec check_lval lval expected_type = match lval with
-       | Parsetree.Identifier (n) ->
-          begin match (find_symtab_stack n symtab_stack) with
-          | Some Value (Var, idtype, _) ->
-             if compare_types idtype expected_type then Ok expected_type
-             else Error ("Error: Mismatched types in assignment of " ^ n)
-          | Some Value (Val, _, _) -> Error ("Error: Cannot re-assign val " ^ n)
-          | Some Type _ -> Error ("Error: Expected value, found type: " ^ n)
-          | None -> Error ("Error: Identifier " ^ n ^ " undefined")
-          end
-       | Parsetree.UnOp (Parsetree.Deref, exp) ->
-          let* ptr_type = eval_expr_type symtab_stack exp in
-          begin match ptr_type with
-          | Pointer _ -> Error "Error: Cannot write immutable pointer"
-          | MutPointer vt ->
-             if compare_types vt expected_type then Ok expected_type
-             else Error "Error: Mismatched types in pointer assignment"
-          | _ -> Error "Error: Incorrect type for unary operation"
-          end
-       | Parsetree.Index (array, idx) ->
-          let* array_type = eval_expr_type symtab_stack array in
-          let* idx_type = eval_expr_type symtab_stack idx in
-          begin match idx_type with
-          | I _ | U _ ->
-             begin match array_type with
-             | Array (_, elem_type) ->
-                if compare_types elem_type expected_type
-                then check_lval array array_type
-                else Error "Error: Mismatched types in array element assignment"
-             | _ -> Error "Error: Cannot index non-array type"
-             end
-          | _ -> Error "Error: Array index must be integer type"
-          end
+     let rec check_lval lval expected_type =
+       let* lval_type = eval_expr_type symtab_stack lval in
+       match lval with
        | Parsetree.StructLiteral exprs ->
           let err = Error "Error: Mismatched types in struct assignment" in
           let add_lval acc lv et =
             let* acc = acc in
             let+ t = check_lval lv et in t
           in
-          let* valtypes = match exprtype with
+          let* valtypes = match expected_type with
             | Struct l -> if List.length exprs <> List.length l then err
                           else Ok l
             | _ -> err
           in
-          let* lvals = List.fold_left2 add_lval (Ok exprtype) exprs valtypes in
-          let* lval_type = eval_expr_type symtab_stack lval in
-          if compare_types lval_type exprtype then Ok exprtype
+          let* lvals = List.fold_left2 add_lval (Ok expected_type) exprs valtypes in
+          if compare_types lval_type expected_type then Ok expected_type
           else err
-       | _ -> Error "Error: Invalid lvalue expression"
+       | _ ->
+          let* (err1, err2) = match lval with
+            | Parsetree.Identifier (n) ->
+               Ok ("assignment of " ^ n, "re-assign val " ^ n)
+            | Parsetree.UnOp (Parsetree.Deref, _) ->
+               Ok ("pointer assignment", "write immutable pointer")
+            | Parsetree.Index (_, _) ->
+               Ok ("array index assignment", "write immutable array")
+            | Parsetree.StructIndexAccess (_, _)
+              | Parsetree.StructMemberAccess (_, _) ->
+               Ok ("struct member assignment", "write immutable struct")
+            | _ -> Error "Error: Invalid lvalue expression"
+          in
+          let* mut = check_mutable lval in
+          if mut then
+            if compare_types lval_type expected_type then Ok expected_type
+            else Error ("Error: Mismatched types in " ^ err1)
+          else
+            Error ("Error: Cannot " ^ err2)
      in
      check_lval lval exprtype
   | Parsetree.TypeCast (t, expr) ->
@@ -342,25 +351,11 @@ let rec eval_expr_type symtab_stack expr = match expr with
            end
         | Parsetree.UnOp (Parsetree.Deref, exp) -> eval_expr_type symtab_stack exp
         | Parsetree.Index (array, _) ->
-           let rec check_mutable exp = match exp with
-             | Parsetree.Identifier name ->
-                let v = find_symtab_stack name symtab_stack in
-                begin match v with
-                | Some (Value (Var, _, _)) -> Ok true
-                | Some (Value (Val, _, _)) -> Ok false
-                | _ -> err
-                end
-             | Parsetree.UnOp (Parsetree.Deref, exp) ->
-                let* t = eval_expr_type symtab_stack exp in
-                begin match t with
-                | MutPointer _ -> Ok true
-                | Pointer _ -> Ok false
-                | _ -> err
-                end
-             | Parsetree.Index (array, _) -> check_mutable array
-             | _ -> Error "Error: Cannot get address of temporary value"
-           in
            let+ mut = check_mutable array in
+           if mut then MutPointer t else Pointer t
+        | Parsetree.StructIndexAccess (exp, _)
+          | Parsetree.StructMemberAccess (exp, _) ->
+           let+ mut = check_mutable exp in
            if mut then MutPointer t else Pointer t
         | _ -> Error "Error: Cannot get address of temporary value"
         end
