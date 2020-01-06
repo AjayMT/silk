@@ -44,6 +44,8 @@ type ir_expr = Identifier of llvm_type * string
              | StructAccess of llvm_type * ir_expr * int
              | GetElemPtr of llvm_type * llvm_type * ir_expr
                              * (llvm_type * ir_expr) list
+             | StructAssign of llvm_type * ir_expr * ir_expr list
+             | Temporary of llvm_type
 type ir_decl = llvm_type * string * ir_expr
 type ir_stmt = Empty
              | Decl of ir_decl
@@ -175,6 +177,8 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | ArrayInit t -> t
   | Label (t, _) -> t
   | Unlabel (t, _) -> t
+  | Temporary t -> t
+  | StructAssign (t, _, _) -> t
   | StructLiteral (t, _) -> t
   | StructAccess (t, _, i) ->
      begin match t with
@@ -247,37 +251,56 @@ let construct_ir_tree ast symtab =
        end
     | Parsetree.Assignment (lval, exp) ->
        let* rexp = map_expr scope_map symtab_stack exp in
-       begin match lval with
-       | Parsetree.Identifier (name) ->
-          let symbol = find_symtab_stack name symtab_stack in
-          begin match symbol with
-          | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
-          | Some (Symtab.Value (_, type_, _)) ->
-             let t = llvm_type_of_silktype type_ in
-             Ok (Assignment (t, ScopeM.find name scope_map, rexp))
-          | None -> Error ("Error: Identifier " ^ name ^ " undefined")
-          end
-       | Parsetree.UnOp (Parsetree.Deref, lexp) ->
-          let+ lexp = map_expr scope_map symtab_stack lexp in
-          Write (get_ir_expr_type rexp, lexp, rexp)
-       | Parsetree.Index (array_expr, idx_expr) ->
-          let* array = map_expr scope_map symtab_stack array_expr in
-          let+ idx = map_expr scope_map symtab_stack idx_expr in
-          let idx_type = get_ir_expr_type idx in
-          let array_type = get_ir_expr_type array in
-          let ptr_exp =
-            GetElemPtr (array_type, Pointer array_type,
-                        UnOp (array_type, AddressOf, array),
-                        [(I 32, Literal (I 32, Int 0)); (idx_type, idx)])
-          in
-          Write (get_ir_expr_type rexp, ptr_exp, rexp)
-       | Parsetree.StructIndexAccess (struct_expr, idx) ->
-          let+ lval = map_expr scope_map symtab_stack lval in
-          Write (get_ir_expr_type rexp,
-                 UnOp (get_ir_expr_type lval, AddressOf, lval),
-                 rexp)
-       | _ -> Error "Error: Invalid lvalue expression"
-       end
+       let rec resolve_assignment lval rexp = match lval with
+         | Parsetree.Identifier (name) ->
+            let symbol = find_symtab_stack name symtab_stack in
+            begin match symbol with
+            | Some (Symtab.Type _) ->
+               Error ("Error: Expected value, found type: " ^ name)
+            | Some (Symtab.Value (_, type_, _)) ->
+               let t = llvm_type_of_silktype type_ in
+               Ok (Assignment (t, ScopeM.find name scope_map, rexp))
+            | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+            end
+         | Parsetree.UnOp (Parsetree.Deref, lexp) ->
+            let+ lexp = map_expr scope_map symtab_stack lexp in
+            Write (get_ir_expr_type rexp, lexp, rexp)
+         | Parsetree.Index (array_expr, idx_expr) ->
+            let* array = map_expr scope_map symtab_stack array_expr in
+            let+ idx = map_expr scope_map symtab_stack idx_expr in
+            let idx_type = get_ir_expr_type idx in
+            let array_type = get_ir_expr_type array in
+            let ptr_exp =
+              GetElemPtr (array_type, Pointer array_type,
+                          UnOp (array_type, AddressOf, array),
+                          [(I 32, Literal (I 32, Int 0)); (idx_type, idx)])
+            in
+            Write (get_ir_expr_type rexp, ptr_exp, rexp)
+         | Parsetree.StructIndexAccess (struct_expr, idx) ->
+            let+ lval = map_expr scope_map symtab_stack lval in
+            Write (get_ir_expr_type rexp,
+                   UnOp (get_ir_expr_type lval, AddressOf, lval),
+                   rexp)
+         | Parsetree.StructLiteral exprs ->
+            let rexp_type = get_ir_expr_type rexp in
+            let* members = match rexp_type with
+              | Struct l -> Ok l
+              | StructLabeled l -> Ok ((fun (_, t) -> t) @@ List.split l)
+              | _ -> Error "Error: Mismatched types in struct assignment"
+            in
+            let tmp = Temporary rexp_type in
+            let add_assign acc exp =
+              let (acc, idx) = acc in
+              let+ expr =
+                (resolve_assignment exp (StructAccess (rexp_type, tmp, idx)))
+              in
+              (expr :: acc, idx + 1)
+            in
+            let+ (exprs, _) = Symtab.fold_left_bind add_assign ([], 0) exprs in
+            StructAssign (rexp_type, rexp, exprs)
+         | _ -> Error "Error: Invalid lvalue expression"
+       in
+       resolve_assignment lval rexp
     | Parsetree.TypeCast (type_, expr) ->
        let* silktype = Symtab.silktype_of_asttype [types_tab] type_ in
        let+ ir_expr = map_expr scope_map symtab_stack expr in
@@ -677,20 +700,21 @@ let construct_ir_tree ast symtab =
   List.rev l
 
 let rec codegen_expr acc expr =
-  let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+  let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
   match expr with
   | Identifier (t, name) ->
      begin match t with
      | Function (_, _) ->
-        Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
+        Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LNamed name)
      | _ ->
         let res = LTemporary tmp_idx in
         let new_inst = (res, Load (t, Pointer t, LNamed name)) in
-        Ok (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+        Ok (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
      end
   | ParamIdentifier (t, name) ->
-     Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
-  | Literal (t, lit) -> Ok (cont_label, brk_label, tmp_idx, insts, LLiteral lit)
+     Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LNamed name)
+  | Literal (t, lit) ->
+     Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LLiteral lit)
   | ArrayElems (t, exprs) ->
      let* val_type = match t with
        | Array (_, t) -> Ok t
@@ -698,18 +722,19 @@ let rec codegen_expr acc expr =
      in
      let insert_value acc expr =
        let (acc, idx) = acc in
-       let (_, _, _, _, array_value) = acc in
+       let (_, _, _, _, _, array_value) = acc in
        let+ acc = codegen_expr acc expr in
-       let (cont_label, brk_label, tmp_idx, insts, exp_value) = acc in
+       let (cont_label, brk_label, tmp_idx, tmp_value, insts, exp_value) = acc in
        let res = LTemporary tmp_idx in
        let new_inst =
          (res, InsertValue (t, array_value, val_type, exp_value, idx))
        in
-       ((cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res), idx + 1)
+       ((cont_label, brk_label, tmp_idx + 1, tmp_value,
+         new_inst :: insts, res), idx + 1)
      in
-     let acc = (cont_label, brk_label, tmp_idx, insts, LUndef) in
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value, insts, LUndef) in
      let+ (acc, _) = Symtab.fold_left_bind insert_value (acc, 0) exprs in acc
-  | ArrayInit t -> Ok (cont_label, brk_label, tmp_idx, insts, LZeroInit)
+  | ArrayInit t -> Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LZeroInit)
   | StructLiteral (struct_t, exprs) ->
      let* val_types = match (discard_labels struct_t) with
        | Struct l -> Ok l
@@ -718,130 +743,149 @@ let rec codegen_expr acc expr =
      let insert_value acc t expr =
        let* acc = acc in
        let (acc, idx) = acc in
-       let (_, _, _, _, struct_value) = acc in
+       let (_, _, _, _, _, struct_value) = acc in
        let+ acc = codegen_expr acc expr in
-       let (cont_label, brk_label, tmp_idx, insts, exp_value) = acc in
+       let (cont_label, brk_label, tmp_idx, tmp_value, insts, exp_value) = acc in
        let res = LTemporary tmp_idx in
        let new_inst =
          (res, InsertValue (struct_t, struct_value, t, exp_value, idx))
        in
-       ((cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res), idx + 1)
+       ((cont_label, brk_label, tmp_idx + 1, tmp_value,
+         new_inst :: insts, res), idx + 1)
      in
-     let acc = (cont_label, brk_label, tmp_idx, insts, LUndef) in
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value, insts, LUndef) in
      let+ (acc, _) = List.fold_left2 insert_value (Ok (acc, 0)) val_types exprs in
      acc
   | StructAccess (t, expr, idx) ->
      let+ acc = codegen_expr acc expr in
-     let (cont_label, brk_label, tmp_idx, insts, struct_value) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, struct_value) = acc in
      let res = LTemporary tmp_idx in
      let new_inst = (res, ExtractValue (t, struct_value, idx)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | Label (_, expr) -> codegen_expr acc expr
   | Unlabel (_, expr) -> codegen_expr acc expr
   | Assignment (t, name, rexpr) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) =
        codegen_expr acc rexpr
      in
      let new_inst = (NoValue, Store (t, last_result, Pointer t, LNamed name)) in
-     (cont_label, brk_label, tmp_idx, new_inst :: insts, last_result)
+     (cont_label, brk_label, tmp_idx, tmp_value, new_inst :: insts, last_result)
+  | StructAssign (struct_t, struct_expr, exprs) ->
+     let* acc = codegen_expr acc struct_expr in
+     let (cont_label, brk_label, tmp_idx, _, insts, struct_val) = acc in
+     let add_assign acc expr =
+       let (cont_label, brk_label, tmp_idx, _, insts, res) = acc in
+       let acc =
+         (cont_label, brk_label, tmp_idx, Some struct_val, insts, res)
+       in
+       codegen_expr acc expr
+     in
+     let+ acc = Symtab.fold_left_bind add_assign acc exprs in
+     let (cont_label, brk_label, tmp_idx, _, insts, struct_val) = acc in
+     (cont_label, brk_label, tmp_idx, None, insts, struct_val)
+  | Temporary t ->
+     begin match tmp_value with
+     | Some v -> Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, v)
+     | None -> Error "Error: No temporary value"
+     end
   | Write (t, lexp, rexp) ->
      let* acc = codegen_expr acc lexp in
-     let (_, _, _, _, ptr_val) = acc in
-     let+ (cont_label, brk_label, tmp_idx, insts, r_val) =
+     let (_, _, _, _, _, ptr_val) = acc in
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, r_val) =
        codegen_expr acc rexp
      in
      let new_inst = (NoValue, Store (t, r_val, Pointer t, ptr_val)) in
-     (cont_label, brk_label, tmp_idx, new_inst :: insts, r_val)
+     (cont_label, brk_label, tmp_idx, tmp_value, new_inst :: insts, r_val)
   | FunctionCall (rt, fexp, ats, args) ->
      let* acc = codegen_expr acc fexp in
-     let (_, _, _, _, f_value) = acc in
+     let (_, _, _, _, _, f_value) = acc in
      let+ (args_rev, acc) =
        Symtab.fold_left_bind
          (fun (args, acc) arg_expr ->
            let+ acc = codegen_expr acc arg_expr in
-           let (_, _, _, _, arg_value) = acc in
+           let (_, _, _, _, _, arg_value) = acc in
            (arg_value :: args, acc))
          ([], acc) args
      in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let res = match rt with
        | Void -> NoValue
        | _ -> LTemporary tmp_idx
      in
      let new_inst = (res, Call (rt, f_value,
                                 List.combine ats (List.rev args_rev))) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | ItoF (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, ItoFP (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | FtoI (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, FPtoI (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | BitCast (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, BitCast (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | PtoI (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, PtrToInt (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | ItoP (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, IntToPtr (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | Trunc (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, Trunc (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
   | Ext (at, exp, bt) ->
-     let+ (cont_label, brk_label, tmp_idx, insts, v) =
+     let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, v) =
        codegen_expr acc exp
      in
      let res = LTemporary tmp_idx in
      let new_inst = (res, Ext (at, v, bt)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
 
   | GetElemPtr (val_type, ptr_type, ptr_expr, idxs) ->
      let* acc = codegen_expr acc ptr_expr in
-     let (_, _, _, _, ptr_value) = acc in
+     let (_, _, _, _, _, ptr_value) = acc in
      let add_idx acc (t, expr) =
        let (acc, idxs) = acc in
        let+ acc = codegen_expr acc expr in
-       let (_, _, _, _, idx) = acc in
+       let (_, _, _, _, _, idx) = acc in
        (acc, (t, idx) :: idxs)
      in
      let+ (acc, idxs) = Symtab.fold_left_bind add_idx (acc, []) idxs in
-     let (cont_label, brk_label, tmp_idx, insts, idx_value) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, idx_value) = acc in
      let res = LTemporary tmp_idx in
      let new_inst = (res,
                      GEP (val_type, ptr_type, ptr_value, List.rev idxs)) in
-     (cont_label, brk_label, tmp_idx + 1, new_inst :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, new_inst :: insts, res)
 
   | BinOp (t, op, l_expr, r_expr) ->
      let* acc = codegen_expr acc l_expr in
-     let (_, _, _, _, l_value) = acc in
+     let (_, _, _, _, _, l_value) = acc in
      let+ acc = codegen_expr acc r_expr in
-     let (cont_label, brk_label, tmp_idx, insts, r_value) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, r_value) = acc in
      let res = LTemporary tmp_idx in
 
      let new_inst = match op with
@@ -863,13 +907,13 @@ let rec codegen_expr acc expr =
        | RShift -> Shr (t, l_value, r_value)
      in
 
-     (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
+     (cont_label, brk_label, tmp_idx + 1, tmp_value, (res, new_inst) :: insts, res)
   | UnOp (t, op, expr) ->
      match op with
      | AddressOf ->
         begin match expr with
         | Identifier (_, name) ->
-           Ok (cont_label, brk_label, tmp_idx, insts, LNamed name)
+           Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LNamed name)
         | UnOp (_, Deref, expr) -> codegen_expr acc expr
         | StructAccess (struct_type, struct_expr, idx) ->
            let rec resolve_addressof expr = match expr with
@@ -888,7 +932,7 @@ let rec codegen_expr acc expr =
         end
      | _ ->
         let+ acc = codegen_expr acc expr in
-        let (cont_label, brk_label, tmp_idx, insts, result) = acc in
+        let (cont_label, brk_label, tmp_idx, tmp_value, insts, result) = acc in
         let res = LTemporary tmp_idx in
         let new_inst = match op with
           | UMinus ->
@@ -904,36 +948,37 @@ let rec codegen_expr acc expr =
              end
           | _ -> NoInst
         in
-        (cont_label, brk_label, tmp_idx + 1, (res, new_inst) :: insts, res)
+        (cont_label, brk_label, tmp_idx + 1, tmp_value,
+         (res, new_inst) :: insts, res)
 
 let rec codegen_stmt acc stmt =
-  let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+  let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
   match stmt with
   | Empty -> Ok acc
   | Decl (t, name, expr) ->
      let+ acc = codegen_expr acc expr in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let res = LNamed name in
      let alloca_inst = (LNamed name, Alloca t) in
      let store_inst = (NoValue, Store (t, last_result, Pointer t, res)) in
-     (cont_label, brk_label, tmp_idx,
+     (cont_label, brk_label, tmp_idx, tmp_value,
       store_inst :: alloca_inst :: insts, NoValue)
   | Expr expr -> codegen_expr acc expr
   | Block (name, stmts) ->
      let new_label = (NoValue, Label name) in
      let block_entry_inst = (NoValue, Branch name) in
-     let acc = (cont_label, brk_label, tmp_idx,
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value,
                 new_label :: block_entry_inst :: insts, last_result) in
      let+ acc = Symtab.fold_left_bind codegen_stmt acc stmts in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let end_label = name ^ "_end" in
      let branch_inst = (NoValue, Branch end_label) in
      let end_inst = (NoValue, Label end_label) in
-     (cont_label, brk_label, tmp_idx,
+     (cont_label, brk_label, tmp_idx, tmp_value,
       end_inst :: branch_inst :: insts, last_result)
   | IfElse (if_label, else_label, cond_expr, if_stmts, else_stmts) ->
      let* acc = codegen_expr acc cond_expr in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let branch_inst =
        (NoValue,
         BranchCond (last_result, if_label, else_label))
@@ -944,15 +989,15 @@ let rec codegen_stmt acc stmt =
      let if_end_branch_inst = (NoValue, Branch ifelse_end_label) in
      let else_label_inst = (NoValue, Label else_label) in
      let else_end_branch_inst = (NoValue, Branch ifelse_end_label) in
-     let acc = (cont_label, brk_label, tmp_idx,
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value,
                 if_label_inst :: branch_inst :: insts, NoValue) in
      let* acc = Symtab.fold_left_bind codegen_stmt acc if_stmts in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-     let acc = (cont_label, brk_label, tmp_idx,
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value,
                 else_label_inst :: if_end_branch_inst :: insts, NoValue) in
      let+ acc = Symtab.fold_left_bind codegen_stmt acc else_stmts in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
-     (cont_label, brk_label, tmp_idx,
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
+     (cont_label, brk_label, tmp_idx, tmp_value,
       ifelse_end_label_inst :: else_end_branch_inst :: insts, NoValue)
   | While (while_label, cond_expr, while_stmts) ->
      let while_label_inst = (NoValue, Label while_label) in
@@ -961,26 +1006,26 @@ let rec codegen_stmt acc stmt =
      let while_cond_label = while_label ^ "_cond" in
      let while_cond_label_inst = (NoValue, Label while_cond_label) in
      let branch_inst = (NoValue, Branch while_cond_label) in
-     let acc = (Some while_cond_label, Some while_end_label, tmp_idx,
+     let acc = (Some while_cond_label, Some while_end_label, tmp_idx, tmp_value,
                 while_label_inst :: branch_inst :: insts, NoValue) in
      let* acc = Symtab.fold_left_bind codegen_stmt acc while_stmts in
-     let (cont_label, brk_label, tmp_idx, insts, _) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, _) = acc in
      let branch_into_cond_inst = (NoValue, Branch while_cond_label) in
      let acc =
-       (cont_label, brk_label, tmp_idx,
+       (cont_label, brk_label, tmp_idx, tmp_value,
         while_cond_label_inst :: branch_into_cond_inst :: insts, NoValue)
      in
      let+ acc = codegen_expr acc cond_expr in
-     let (_, _, tmp_idx, insts, last_result) = acc in
+     let (_, _, tmp_idx, tmp_value, insts, last_result) = acc in
      let branch_cond_inst =
        (NoValue,
         BranchCond (last_result, while_label, while_end_label))
      in
-     (None, None, tmp_idx,
+     (None, None, tmp_idx, tmp_value,
       while_end_label_inst :: branch_cond_inst :: insts, NoValue)
   | For (for_label, decl, cond_expr, inc_expr, for_stmts) ->
      let* acc = codegen_stmt acc (Decl decl) in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let for_label_inst = (NoValue, Label for_label) in
      let for_end_label = for_label ^ "_end" in
      let for_end_label_inst = (NoValue, Label for_end_label) in
@@ -990,28 +1035,28 @@ let rec codegen_stmt acc stmt =
      let for_inc_label_inst = (NoValue, Label for_inc_label) in
      let branch_into_for_inst = (NoValue, Branch for_label) in
      let acc =
-       (Some for_inc_label, Some for_end_label, tmp_idx,
+       (Some for_inc_label, Some for_end_label, tmp_idx, tmp_value,
         for_label_inst :: branch_into_for_inst :: insts, NoValue)
      in
      let* acc = codegen_expr acc cond_expr in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let branch_cond_inst =
        (NoValue,
         BranchCond (last_result, for_body_label, for_end_label)) in
-     let acc = (cont_label, brk_label, tmp_idx,
+     let acc = (cont_label, brk_label, tmp_idx, tmp_value,
                 for_body_label_inst :: branch_cond_inst :: insts, NoValue) in
      let* acc = Symtab.fold_left_bind codegen_stmt acc for_stmts in
-     let (cont_label, brk_label, tmp_idx, insts, last_result) = acc in
+     let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
      let branch_into_inc_inst = (NoValue, Branch for_inc_label) in
      let acc =
-       (cont_label, brk_label, tmp_idx,
+       (cont_label, brk_label, tmp_idx, tmp_value,
         for_inc_label_inst :: branch_into_inc_inst :: insts,
         NoValue)
      in
      let+ acc = codegen_expr acc inc_expr in
-     let (_, _, tmp_idx, insts, _) = acc in
+     let (_, _, tmp_idx, tmp_value, insts, _) = acc in
      let branch_back_cond_inst = (NoValue, Branch for_label) in
-     (None, None, tmp_idx,
+     (None, None, tmp_idx, tmp_value,
       for_end_label_inst :: branch_back_cond_inst :: insts,
       NoValue)
   | Continue ->
@@ -1019,26 +1064,27 @@ let rec codegen_stmt acc stmt =
      | None -> Error "Error: Invalid 'continue'"
      | Some label ->
         let branch_inst = (NoValue, Branch label) in
-        Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+        Ok (cont_label, brk_label, tmp_idx, tmp_value,
+            branch_inst :: insts, NoValue)
      end
   | Break ->
      begin match brk_label with
      | None -> Error "Error: Invalid 'break'"
      | Some label ->
         let branch_inst = (NoValue, Branch label) in
-        Ok (cont_label, brk_label, tmp_idx, branch_inst :: insts, NoValue)
+        Ok (cont_label, brk_label, tmp_idx, tmp_value, branch_inst :: insts, NoValue)
      end
   | Return (exp_opt) ->
      begin match exp_opt with
      | None ->
         let ret_inst = (NoValue, Ret (Void, NoValue)) in
-        Ok (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
+        Ok (cont_label, brk_label, tmp_idx, tmp_value, ret_inst :: insts, NoValue)
      | Some exp ->
-        let+ (cont_label, brk_label, tmp_idx, insts, last_result) =
+        let+ (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) =
           codegen_expr acc exp
         in
         let ret_inst = (NoValue, Ret (get_ir_expr_type exp, last_result)) in
-        (cont_label, brk_label, tmp_idx, ret_inst :: insts, NoValue)
+        (cont_label, brk_label, tmp_idx, tmp_value, ret_inst :: insts, NoValue)
      end
 
 let rec serialize_type t = match t with
@@ -1263,9 +1309,9 @@ let serialize_irt irt_roots =
                            (fun (t, n) -> (serialize_type t) ^ " " ^ n)
                            args) in
        let ns = "define " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
-       let+ (_, _, _, insts, _) =
+       let+ (_, _, _, _, insts, _) =
          Symtab.fold_left_bind
-           codegen_stmt (None, None, 0, [], NoValue) (List.rev body)
+           codegen_stmt (None, None, 0, None, [], NoValue) (List.rev body)
        in
        "}" :: ((List.map serialize_inst insts) @ (ns :: str_insts))
     | FuncFwdDecl (rt, funcname, args, true) ->
