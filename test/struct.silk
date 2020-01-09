@@ -10,3 +10,7 @@ type newtype = struct(u64);
 func q(): newtype {
   return newtype(u64(100));
 }
+
+func r(): void {
+  val a = (: 1, 2, 3 :);
+}

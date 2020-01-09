@@ -13,8 +13,8 @@ type silktype = I of int
               | Bool | Void
               | Pointer of silktype | MutPointer of silktype
               | Array of int * silktype
-              | Struct of silktype list
-              | StructLabeled of (string * silktype) list
+              | Struct of bool * silktype list
+              | StructLabeled of bool * (string * silktype) list
               | Function of (silktype list) * silktype
               | TypeAlias of string * silktype
 
@@ -70,21 +70,21 @@ let rec silktype_of_asttype symtab_stack t = match t with
      let+ t = silktype_of_asttype symtab_stack t in MutPointer t
   | Parsetree.Array (len, t) ->
      let+ t = silktype_of_asttype symtab_stack t in Array (len, t)
-  | Parsetree.Struct types ->
+  | Parsetree.Struct (packed, types) ->
      let add_type acc t =
        let+ t = silktype_of_asttype symtab_stack t in
        t :: acc
      in
      let+ types = fold_left_bind add_type [] types in
-     Struct (List.rev types)
-  | Parsetree.StructLabeled members ->
+     Struct (packed, List.rev types)
+  | Parsetree.StructLabeled (packed, members) ->
      let (names, types) = List.split members in
      let add_type acc t =
        let+ t = silktype_of_asttype symtab_stack t in
        t :: acc
      in
      let+ types = fold_left_bind add_type [] types in
-     StructLabeled (List.combine names (List.rev types))
+     StructLabeled (packed, List.combine names (List.rev types))
   | Parsetree.Function (ats, rt) ->
      let define_arg acc a =
        let+ a = silktype_of_asttype symtab_stack a in
@@ -116,24 +116,26 @@ let rec compare_types a b = match (a, b) with
   | (Pointer a, Pointer b) -> compare_types a b
   | (MutPointer a, MutPointer b) -> compare_types a b
   | (Array (l1, t1), Array (l2, t2)) -> (l1 = l2) && (compare_types t1 t2)
-  | (Struct a, Struct b) ->
-     if List.length a = List.length b then
-       let results =
-         List.map (fun (a, b) -> compare_types a b) (List.combine a b)
-       in
-       List.fold_left (&&) true results
-     else false
-  | (StructLabeled a, StructLabeled b) ->
-     if List.length a = List.length b then
-       let results =
-         List.map (fun ((an, at), (bn, bt)) -> (compare_types at bt) && an = bn)
-           (List.combine a b)
-       in
-       List.fold_left (&&) true results
-     else false
+  | (Struct (p1, a), Struct (p2, b)) ->
+     p1 == p2 &&
+       if List.length a = List.length b then
+         let results =
+           List.map (fun (a, b) -> compare_types a b) (List.combine a b)
+         in
+         List.fold_left (&&) true results
+       else false
+  | (StructLabeled (p1, a), StructLabeled (p2, b)) ->
+     p1 = p2 &&
+       if List.length a = List.length b then
+         let results =
+           List.map (fun ((an, at), (bn, bt)) -> (compare_types at bt) && an = bn)
+             (List.combine a b)
+         in
+         List.fold_left (&&) true results
+       else false
   | (a, b) -> a = b
 
-let rec check_viable_cast cast_t expr_t =
+let rec check_valid_cast cast_t expr_t =
   let err = Error "Error: Invalid type cast" in
   match cast_t with
   | I _ | U _ ->
@@ -156,10 +158,10 @@ let rec check_viable_cast cast_t expr_t =
      | I _ | U _ | MutPointer _ -> Ok ()
      | _ -> err
      end
-  | Struct a ->
+  | Struct (_, a) ->
      begin match expr_t with
-     | StructLabeled b ->
-        let s = Struct (List.map (fun (_, t) -> t) b) in
+     | StructLabeled (p, b) ->
+        let s = Struct (p, List.map (fun (_, t) -> t) b) in
         if compare_types cast_t s then Ok () else err
      | _ ->
         if List.length a = 1 then
@@ -169,10 +171,10 @@ let rec check_viable_cast cast_t expr_t =
           if compare_types cast_t expr_t then Ok ()
           else err
      end
-  | StructLabeled a ->
+  | StructLabeled (p, a) ->
      begin match expr_t with
-     | Struct b ->
-        let s = Struct (List.map (fun (_, t) -> t) a) in
+     | Struct (_, b) ->
+        let s = Struct (p, List.map (fun (_, t) -> t) a) in
         if compare_types expr_t s then Ok () else err
      | _ ->
         if List.length a = 1 then
@@ -182,7 +184,7 @@ let rec check_viable_cast cast_t expr_t =
           if compare_types cast_t expr_t then Ok ()
           else err
      end
-  | TypeAlias (_, a) -> check_viable_cast a expr_t
+  | TypeAlias (_, a) -> check_valid_cast a expr_t
   | _ -> if compare_types cast_t expr_t then Ok ()
          else err
 
@@ -221,15 +223,15 @@ let rec eval_expr_type symtab_stack expr =
      let rec check_lval lval expected_type =
        let* lval_type = eval_expr_type symtab_stack lval in
        match lval with
-       | Parsetree.StructLiteral exprs ->
+       | Parsetree.StructLiteral (_, exprs) ->
           let err = Error "Error: Mismatched types in struct assignment" in
           let add_lval acc lv et =
             let* acc = acc in
             let+ t = check_lval lv et in t
           in
           let* valtypes = match expected_type with
-            | Struct l -> if List.length exprs <> List.length l then err
-                          else Ok l
+            | Struct (_, l) -> if List.length exprs <> List.length l then err
+                               else Ok l
             | _ -> err
           in
           let* lvals = List.fold_left2 add_lval (Ok expected_type) exprs valtypes in
@@ -259,7 +261,7 @@ let rec eval_expr_type symtab_stack expr =
   | Parsetree.TypeCast (t, expr) ->
      let* expr_t = eval_expr_type symtab_stack expr in
      let* cast_t = silktype_of_asttype symtab_stack t in
-     let+ () = check_viable_cast cast_t expr_t in
+     let+ () = check_valid_cast cast_t expr_t in
      cast_t
   | Parsetree.FunctionCall (f, args) ->
      let match_arg_types argtypes exprs =
@@ -367,13 +369,13 @@ let rec eval_expr_type symtab_stack expr =
         end
      end
 
-  | Parsetree.StructLiteral exprs ->
+  | Parsetree.StructLiteral (packed, exprs) ->
      let add_expr acc expr =
        let+ t = eval_expr_type symtab_stack expr in
        t :: acc
      in
      let+ types = fold_left_bind add_expr [] exprs in
-     Struct (List.rev types)
+     Struct (packed, List.rev types)
 
   | Parsetree.ArrayElems [] -> Error "Error: Empty array initializer"
   | Parsetree.ArrayElems (head :: tail) ->
@@ -403,7 +405,7 @@ let rec eval_expr_type symtab_stack expr =
   | Parsetree.StructMemberAccess (exp, name) ->
      let* t = eval_expr_type symtab_stack exp in
      let* members = match (resolve_type_alias t) with
-       | StructLabeled l -> Ok l
+       | StructLabeled (_, l) -> Ok l
        | _ -> Error "Error: Cannot access member of non-labeledstruct type"
      in
      begin match List.assoc_opt name members with
@@ -413,7 +415,7 @@ let rec eval_expr_type symtab_stack expr =
   | Parsetree.StructIndexAccess (exp, idx) ->
      let* t = eval_expr_type symtab_stack exp in
      let* members = match (resolve_type_alias t) with
-       | Struct l -> Ok l
+       | Struct (_, l) -> Ok l
        | _ -> Error "Error: Cannot access member of non-unlabeledstruct type"
      in
      match List.nth_opt members idx with

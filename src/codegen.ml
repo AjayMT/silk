@@ -10,8 +10,8 @@ type llvm_type = I of int
                | F of int
                | Pointer of llvm_type
                | Array of int * llvm_type
-               | Struct of llvm_type list
-               | StructLabeled of (string * llvm_type) list
+               | Struct of bool * llvm_type list
+               | StructLabeled of bool * (string * llvm_type) list
                | Function of llvm_type list * llvm_type
                | Void
 
@@ -130,14 +130,16 @@ let rec llvm_type_of_silktype t =
   | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.Array (len, t) -> Array (len, llvm_type_of_silktype t)
   | Symtab.TypeAlias (_, t) -> llvm_type_of_silktype t
-  | Symtab.Struct types -> Struct (List.map llvm_type_of_silktype types)
-  | Symtab.StructLabeled pairs ->
+  | Symtab.Struct (packed, types) ->
+     Struct (packed, List.map llvm_type_of_silktype types)
+  | Symtab.StructLabeled (packed, pairs) ->
      let (names, types) = List.split pairs in
-     StructLabeled (List.combine names (List.map llvm_type_of_silktype types))
+     StructLabeled (packed,
+                    List.combine names (List.map llvm_type_of_silktype types))
 
 let discard_labels t = match t with
-  | StructLabeled pairs ->
-     let (_, types) = List.split pairs in Struct types
+  | StructLabeled (packed, pairs) ->
+     let (_, types) = List.split pairs in Struct (packed, types)
   | _ -> t
 
 (* TODO binops, other things *)
@@ -182,8 +184,8 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | StructLiteral (t, _) -> t
   | StructAccess (t, _, i) ->
      begin match t with
-     | Struct l -> List.nth l i
-     | StructLabeled l -> (fun (_, t) -> t) @@ List.nth l i
+     | Struct (_, l) -> List.nth l i
+     | StructLabeled (_, l) -> (fun (_, t) -> t) @@ List.nth l i
      | _ -> t
      end
   | GetElemPtr (_, pt, _, idxs) ->
@@ -281,11 +283,11 @@ let construct_ir_tree ast symtab =
             Write (get_ir_expr_type rexp,
                    UnOp (get_ir_expr_type lval, AddressOf, lval),
                    rexp)
-         | Parsetree.StructLiteral exprs ->
+         | Parsetree.StructLiteral (_, exprs) ->
             let rexp_type = get_ir_expr_type rexp in
             let* members = match rexp_type with
-              | Struct l -> Ok l
-              | StructLabeled l -> Ok ((fun (_, t) -> t) @@ List.split l)
+              | Struct (_, l) -> Ok l
+              | StructLabeled (_, l) -> Ok ((fun (_, t) -> t) @@ List.split l)
               | _ -> Error "Error: Mismatched types in struct assignment"
             in
             let tmp = Temporary rexp_type in
@@ -429,7 +431,7 @@ let construct_ir_tree ast symtab =
        | _ -> UnOp (t, o, ir_expr)
        end
 
-    | Parsetree.StructLiteral elems ->
+    | Parsetree.StructLiteral (packed, elems) ->
        let check_elem acc elem =
          let+ exp = map_expr scope_map symtab_stack elem in
          exp :: acc
@@ -437,7 +439,7 @@ let construct_ir_tree ast symtab =
        let+ elems = Symtab.fold_left_bind check_elem [] elems in
        let elems = List.rev elems in
        let types = List.map get_ir_expr_type elems in
-       StructLiteral (Struct types, elems)
+       StructLiteral (Struct (packed, types), elems)
     | Parsetree.StructIndexAccess (exp, idx) ->
        let+ expr = map_expr scope_map symtab_stack exp in
        StructAccess (get_ir_expr_type expr, expr, idx)
@@ -449,7 +451,7 @@ let construct_ir_tree ast symtab =
          | (n, t) :: tl -> if n = e then i else find_member tl e (i + 1)
        in
        let+ t = match expr_type with
-         | StructLabeled l -> Ok l
+         | StructLabeled (_, l) -> Ok l
          | _ -> Error "Error: Cannot access member of non-labeledstruct type"
        in
        StructAccess (expr_type, expr, find_member t name 0)
@@ -737,7 +739,7 @@ let rec codegen_expr acc expr =
   | ArrayInit t -> Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LZeroInit)
   | StructLiteral (struct_t, exprs) ->
      let* val_types = match (discard_labels struct_t) with
-       | Struct l -> Ok l
+       | Struct (_, l) -> Ok l
        | _ -> Error "WTF"
      in
      let insert_value acc t expr =
@@ -1092,9 +1094,10 @@ let rec serialize_type t = match t with
   | Void -> "void"
   | Array (len, t) -> "[" ^ (string_of_int len)
                       ^ " x " ^ (serialize_type t) ^ "]"
-  | Struct ts ->
-     "{" ^ (String.concat ", " (List.map serialize_type ts)) ^ "}"
-  | StructLabeled pairs -> serialize_type @@ discard_labels t
+  | Struct (packed, ts) ->
+     let s = "{" ^ (String.concat ", " (List.map serialize_type ts)) ^ "}" in
+     if packed then "<" ^ s ^ ">" else s
+  | StructLabeled (packed, pairs) -> serialize_type @@ discard_labels t
 
   (* The Function type is actually a function pointer. *)
   | Function (ats, rt) ->

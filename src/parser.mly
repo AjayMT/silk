@@ -28,7 +28,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token POINTER DEREF
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA DOT COLON SEMICOLON
-%token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT
+%token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED
 %token TYPE VAL VAR FUNC EXTERN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
@@ -158,8 +158,10 @@ pointer_type: POINTER type_ { Pointer $2 }
   | MUT POINTER type_       { MutPointer $3 }
 ;
 
-struct_type: STRUCT LPAREN argument_list RPAREN { StructLabeled $3 }
-  | STRUCT LPAREN type_list RPAREN              { Struct $3 }
+struct_type: STRUCT LPAREN argument_list RPAREN { StructLabeled (false, $3) }
+  | STRUCT LPAREN type_list RPAREN              { Struct (false, $3) }
+  | PACKED LPAREN argument_list RPAREN          { StructLabeled (true, $3) }
+  | PACKED LPAREN type_list RPAREN              { Struct (true, $3) }
 ;
 
 type_list: _type_list      { List.rev $1 }
@@ -178,7 +180,8 @@ deref_expr: IDENTIFIER { Identifier $1 }
   | literal            { Literal $1 }
   | LPAREN expr RPAREN { $2 }
 
-  | LPAREN struct_expr_list RPAREN { StructLiteral $2 }
+  | LPAREN struct_expr_list RPAREN { StructLiteral (false, $2) }
+  | LPAREN COLON struct_expr_list COLON RPAREN { StructLiteral (true, $3) }
 
   | LBRACKET type_ SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
   | LCURLY expr_list RCURLY                       { ArrayElems $2 }

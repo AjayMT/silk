@@ -40,6 +40,7 @@ rule token = parse
 | "true"      { TRUE }
 | "false"     { FALSE }
 | "struct"    { STRUCT }
+| "packed"    { PACKED }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
 
 | decimalDigit+ "." decimalDigit+ "f" as f32_literal {
