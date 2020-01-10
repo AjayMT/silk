@@ -17,6 +17,7 @@ type literal = LI8 of int | LI16 of int | LI32 of int | LI64 of int
                | LU8 of int | LU16 of int | LU32 of int | LU64 of int
                | LF32 of float | LF64 of float
                | LBool of bool
+               | LString of string
 
 type bin_op = Plus | Minus | Times | Divide | Modulus
               | Equal | LessThan | GreaterThan

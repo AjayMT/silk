@@ -15,7 +15,7 @@ type llvm_type = I of int
                | Function of llvm_type list * llvm_type
                | Void
 
-type ir_literal = Int of int | Float of float
+type ir_literal = Int of int | Float of float | String_ of string
 type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
@@ -157,6 +157,7 @@ let resolve_literal l = match l with
      | Parsetree.LF32 f -> Ok (Float f)
      | Parsetree.LF64 f -> Ok (Float f)
      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
+     | Parsetree.LString s -> Ok (String_ s)
      end
   | _ -> Error "Error: Could not resolve static value at compile time"
 
@@ -250,6 +251,7 @@ let construct_ir_tree ast symtab =
        | Parsetree.LF32 f -> Ok (Literal (F 32, Float f))
        | Parsetree.LF64 f -> Ok (Literal (F 64, Float f))
        | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
+       | Parsetree.LString s -> Ok (Literal (Pointer (I 8), String_ s))
        end
     | Parsetree.Assignment (lval, exp) ->
        let* rexp = map_expr scope_map symtab_stack exp in
@@ -716,7 +718,23 @@ let rec codegen_expr acc expr =
   | ParamIdentifier (t, name) ->
      Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LNamed name)
   | Literal (t, lit) ->
-     Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LLiteral lit)
+     begin match lit with
+     | String_ s ->
+        let array_t = Array ((String.length s) + 1, I 8) in
+        let alloca_res = LTemporary tmp_idx in
+        let alloca_inst = (alloca_res, Alloca array_t) in
+        let store_inst =
+          (NoValue, Store (array_t, LLiteral lit, Pointer array_t, alloca_res))
+        in
+        let bc_res = LTemporary (tmp_idx + 1) in
+        let bc_inst =
+          (bc_res, BitCast (Pointer array_t, alloca_res, Pointer (I 8)))
+        in
+        Ok (cont_label, brk_label, tmp_idx + 2, tmp_value,
+            bc_inst :: store_inst :: alloca_inst :: insts, bc_res)
+     | _ ->
+        Ok (cont_label, brk_label, tmp_idx, tmp_value, insts, LLiteral lit)
+     end
   | ArrayElems (t, exprs) ->
      let* val_type = match t with
        | Array (_, t) -> Ok t
@@ -1114,6 +1132,21 @@ let rec serialize_type t = match t with
 let serialize_literal l = match l with
   | Int i -> string_of_int i
   | Float f -> string_of_float f
+  | String_ s ->
+     let string_of_list l =
+       let buf = Buffer.create 16 in
+       List.iter (Buffer.add_char buf) l;
+       Buffer.contents buf
+     in
+     let escape c = match (int_of_char c) with
+       | i when i < 32 ->
+          let s = Printf.sprintf "%.2X" i in
+          ['\\'; s.[0]; s.[1]]
+       | i -> [c]
+     in
+     let chars = List.init (String.length s) (String.get s) in
+     let escaped = List.flatten @@ List.map escape chars in
+     "c\"" ^ (string_of_list escaped) ^ "\\00\""
 
 let rec serialize_value v = match v with
   | NoValue -> ""

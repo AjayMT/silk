@@ -50,6 +50,7 @@ let silktype_of_literal_type l = match l with
   | Parsetree.LF32 _ -> F 32
   | Parsetree.LF64 _ -> F 64
   | Parsetree.LBool _ -> Bool
+  | Parsetree.LString _ -> Pointer (I 8)
 
 let rec silktype_of_asttype symtab_stack t = match t with
   | Parsetree.I8  -> Ok (I 8)

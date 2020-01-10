@@ -14,6 +14,7 @@
 %token <int> U64_LITERAL
 %token <float> F32_LITERAL
 %token <float> F64_LITERAL
+%token <string> STRING_LITERAL
 
 %token EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
 ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
@@ -275,4 +276,5 @@ literal: I8_LITERAL  { LI8 $1 }
   | F64_LITERAL      { LF64 $1 }
   | TRUE             { LBool true }
   | FALSE            { LBool false }
+  | STRING_LITERAL   { LString $1 }
 ;

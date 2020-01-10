@@ -2,6 +2,8 @@
 {
 open Parser
 exception SyntaxError of string
+
+let char_of_string s = (Scanf.unescaped s).[0]
 }
 
 let decimalDigit = ['0'-'9']
@@ -10,6 +12,7 @@ let octalDigit = ['0'-'7']
 let leadingChar = ['a'-'z' 'A'-'Z']
 let nonleadingChar = ['a'-'z' 'A'-'Z' '_' '0'-'9']
 let whitespace = [' ' '\t']
+let escapeSequence = ('\\' (['\'' '"' '?' '\\' 'a' 'b' 'f' 'n' 'r' 't' 'v'] | ['0'-'7']['0'-'7']?['0'-'7']? | 'x'['a'-'f' 'A'-'F' '0'-'9']+))
 
 rule token = parse
 | "type"      { TYPE }
@@ -71,6 +74,12 @@ I8_LITERAL (int_of_string
 | "0b" ['0' '1']+ "c" as i8_literal {
 I8_LITERAL (int_of_string
 (String.sub i8_literal 0 ((String.length i8_literal) - 1)))
+}
+| "'" ([^ '\'' '\\' '\n'] | escapeSequence)+ "'" as i8_literal {
+I8_LITERAL (int_of_char @@
+char_of_string @@
+String.sub i8_literal 1 @@
+(String.length i8_literal) - 2)
 }
 
 | decimalDigit+ "h" as i16_literal {
@@ -173,6 +182,11 @@ U64_LITERAL (int_of_string
 | "0b" ['0' '1']+ "ul" as u64_literal {
 U64_LITERAL (int_of_string
 (String.sub u64_literal 0 ((String.length u64_literal) - 2)))
+}
+
+| "\"" ([^ '"' '\\' '\n'] | escapeSequence)* "\"" as string_literal {
+STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
+(String.length string_literal) - 2)
 }
 
 | ":"         { COLON }
