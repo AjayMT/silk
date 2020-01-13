@@ -96,7 +96,7 @@ let rec silktype_of_asttype symtab_stack t = match t with
      let args = List.rev args_rev in
      let+ rt = silktype_of_asttype symtab_stack rt in
      Function (args, rt)
-  | Parsetree.TypeAlias (name) ->
+  | Parsetree.TypeAlias name ->
      match find_symtab_stack name symtab_stack with
      | Some (Type t) -> Ok (TypeAlias (name, t))
      | Some (Value _) ->
@@ -440,9 +440,9 @@ let rec eval_expr_type symtab_stack expr =
   | Parsetree.Index (array, idx) ->
      let* array_type = eval_expr_type symtab_stack array in
      let* idx_type = eval_expr_type symtab_stack idx in
-     begin match idx_type with
+     begin match resolve_type_alias idx_type with
      | I _ | U _ ->
-        begin match array_type with
+        begin match resolve_type_alias array_type with
         | Array (_, elem_type) -> Ok elem_type
         | _ -> Error "Error: Cannot index non-array type"
         end

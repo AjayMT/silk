@@ -480,7 +480,7 @@ let construct_ir_tree ast symtab =
        let elem_type = get_ir_expr_type (List.hd elems) in
        ArrayElems (Array (List.length elems, elem_type), List.rev elems)
     | Parsetree.ArrayInit (t, len) ->
-       let* t = Symtab.silktype_of_asttype symtab_stack t in
+       let* t = Symtab.silktype_of_asttype [types_tab] t in
        Ok (ArrayInit (Array (len, llvm_type_of_silktype t)))
     | Parsetree.Index (array_exp, idx_exp) ->
        let* array = map_expr scope_map symtab_stack array_exp in

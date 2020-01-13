@@ -1,5 +1,7 @@
+
 type a = struct(i32, i32, i32);
 
 func f(): a {
+  var ar = [a; 1];
   return a(1, 2, 3);
 }

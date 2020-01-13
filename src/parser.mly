@@ -188,7 +188,7 @@ deref_expr: IDENTIFIER { Identifier $1 }
   | literal            { Literal $1 }
   | LPAREN expr RPAREN { $2 }
 
-  | LPAREN struct_expr_list RPAREN { StructLiteral (false, $2) }
+  | LPAREN struct_expr_list RPAREN             { StructLiteral (false, $2) }
   | LPAREN COLON struct_expr_list COLON RPAREN { StructLiteral (true, $3) }
 
   | LBRACKET type_ SEMICOLON I32_LITERAL RBRACKET { ArrayInit ($2, $4) }
