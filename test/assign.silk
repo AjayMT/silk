@@ -1,9 +1,11 @@
 
+type dt = struct(i32, struct(i32, i32));
+
 func main(): i32 {
   var a = 0;
   var b = 0;
   var c = 0;
-  var d = (1, (2, 3));
+  var d = dt(1, (2, 3));
   (a, (b, c)) = d;
   return c;
 }

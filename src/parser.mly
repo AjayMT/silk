@@ -61,12 +61,16 @@ _translation_unit: top_decl         { [$1] }
 ;
 
 top_decl: type_def { TypeDef $1 }
+  | type_fwd_def   { TypeFwdDef $1 }
   | val_decl       { ValDecl $1 }
   | func_decl      { FuncDecl $1 }
   | func_fwd_decl  { FuncFwdDecl $1 }
 ;
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
+;
+
+type_fwd_def: TYPE IDENTIFIER SEMICOLON { $2 }
 ;
 
 val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
@@ -165,6 +169,10 @@ struct_type: STRUCT LPAREN argument_list RPAREN { StructLabeled (false, $3) }
   | PACKED LPAREN type_list RPAREN              { Struct (true, $3) }
 ;
 
+struct_init: struct_type      { $1 }
+  | LPAREN struct_init RPAREN { $2 }
+;
+
 type_list: _type_list      { List.rev $1 }
 ;
 _type_list: type_          { [$1] }
@@ -172,7 +180,6 @@ _type_list: type_          { [$1] }
 ;
 
 cast_type: base_type        { $1 }
-  | struct_type             { $1 }
   | pointer_type            { $1 }
   | LPAREN cast_type RPAREN { $2 }
 ;
@@ -199,6 +206,7 @@ non_bin_expr: deref_expr         { $1 }
   | non_bin_expr LPAREN expr_list RPAREN { FunctionCall ($1, $3) }
   | non_bin_expr LPAREN RPAREN           { FunctionCall ($1, []) }
   | cast_type LPAREN expr RPAREN { TypeCast ($1, $3) }
+  | struct_init LPAREN expr_list RPAREN { StructInit ($1, $3) }
 ;
 
 expr: non_bin_expr { $1 }

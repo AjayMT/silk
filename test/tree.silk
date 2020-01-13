@@ -1,0 +1,9 @@
+
+type node;
+type node = struct(i32, mut$node, mut$node);
+type bintree = struct(node);
+
+func bintree_create(value: i32): bintree {
+  var a = node(value, mut$node(0), mut$node(0));
+  return bintree(a);
+}

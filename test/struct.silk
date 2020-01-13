@@ -2,7 +2,7 @@
 type point = struct(x: i32, y: i32);
 
 func p(): point {
-  return point((1, 2));
+  return point(1, 2);
 }
 
 type newtype = struct(u64);
