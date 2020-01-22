@@ -26,12 +26,13 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token ASTERISK SLASH PERCENT
 %token UMINUS
 %token ADDRESSOF
-%token POINTER DEREF
+%token DEREF
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA DOT COLON SEMICOLON
 %token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED
-%token TYPE VAL VAR FUNC EXTERN
+%token TYPE VAL VAR FUNC EXTERN PRIVATE
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
+%token TEMPLATE
 %token EOF
 
 %nonassoc EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
@@ -60,11 +61,13 @@ _translation_unit: top_decl         { [$1] }
   | _translation_unit top_decl      { $2 :: $1 }
 ;
 
-top_decl: type_def { TypeDef $1 }
-  | type_fwd_def   { TypeFwdDef $1 }
-  | val_decl       { ValDecl $1 }
-  | func_decl      { FuncDecl $1 }
-  | func_fwd_decl  { FuncFwdDecl $1 }
+top_decl: type_def       { TypeDef $1 }
+  | type_fwd_def         { TypeFwdDef $1 }
+  | val_decl             { ValDecl (true, $1) }
+  | PRIVATE val_decl     { ValDecl (false, $2) }
+  | func_decl            { FuncDecl (true, $1) }
+  | PRIVATE func_decl    { FuncDecl (false, $2) }
+  | func_fwd_decl        { FuncFwdDecl $1 }
 ;
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
@@ -159,8 +162,8 @@ base_type: I8              { I8 }
   | VOID                   { Void }
 ;
 
-pointer_type: POINTER type_ { Pointer $2 }
-  | MUT POINTER type_       { MutPointer $3 }
+pointer_type: ASTERISK type_ { Pointer $2 }
+  | MUT ASTERISK type_       { MutPointer $3 }
 ;
 
 struct_type: STRUCT LPAREN argument_list RPAREN { StructLabeled (false, $3) }

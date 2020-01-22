@@ -19,6 +19,7 @@ rule token = parse
 | "val"       { VAL }
 | "var"       { VAR }
 | "extern"    { EXTERN }
+| "private"   { PRIVATE }
 | "func"      { FUNC }
 | "if"        { IF }
 | "else"      { ELSE }
@@ -193,7 +194,7 @@ STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
 | ";"         { SEMICOLON }
 | ","         { COMMA }
 | "."         { DOT }
-| "$"         { POINTER }
+| "$"         { TEMPLATE }
 | "@"         { DEREF }
 | ">>"        { RSHIFT }
 | "<<"        { LSHIFT }

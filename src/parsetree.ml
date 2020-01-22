@@ -55,6 +55,6 @@ type func_decl = string * (string * type_) list * type_ * statement
 
 type top_decl = TypeDef of type_def
               | TypeFwdDef of string
-              | ValDecl of val_decl
-              | FuncDecl of func_decl
+              | ValDecl of bool * val_decl
+              | FuncDecl of bool * func_decl
               | FuncFwdDecl of func_fwd_decl

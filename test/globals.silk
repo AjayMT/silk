@@ -1,0 +1,8 @@
+var b = "asdf";
+
+extern func printf(s: *i8): void;
+
+func main(): i32 {
+  printf(b);
+  return 0;
+}

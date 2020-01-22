@@ -632,8 +632,8 @@ let construct_symtab ast =
        | None -> Ok (SymtabM.add ident (Type (TypeStub ident)) symtab)
        | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
        end
-    | Parsetree.ValDecl vd -> trav_valdecl symtab [] symtab vd
-    | Parsetree.FuncDecl (ident, arglist, ret_asttype, body) ->
+    | Parsetree.ValDecl (_, vd) -> trav_valdecl symtab [] symtab vd
+    | Parsetree.FuncDecl (_, (ident, arglist, ret_asttype, body)) ->
        let* (new_symtab, ft) =
          trav_funcdecl symtab (ident, arglist, ret_asttype)
        in

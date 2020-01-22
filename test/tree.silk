@@ -1,10 +1,10 @@
 
 type node;
-type node = struct(value: i32, left: mut$node, right: mut$node);
+type node = struct(value: i32, left: mut*node, right: mut*node);
 type bintree = struct(node);
 
 func bintree_create(value: i32): bintree {
   var n = [node; 1];
-  var a = node(value, &n[0], mut$node(0));
+  var a = node(value, &n[0], mut*node(0));
   return bintree(a);
 }

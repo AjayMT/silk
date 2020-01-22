@@ -18,6 +18,7 @@ type llvm_type = I of int
                | Void
 
 type ir_literal = Int of int | Float of float | String_ of string
+                  | GlobalString of string
 type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
@@ -57,8 +58,8 @@ type ir_stmt = Empty
              | Continue
              | Break
              | Return of ir_expr option
-type ir_root = StaticDecl of llvm_type * string * ir_literal
-             | FuncDecl of llvm_type * string
+type ir_root = StaticDecl of llvm_type * bool * string * ir_literal
+             | FuncDecl of llvm_type * bool * string
                            * (llvm_type * string) list * ir_stmt list
              | FuncFwdDecl of llvm_type * string
                               * (llvm_type * string) list * bool
@@ -148,7 +149,7 @@ let rec resolve_alias t = match t with
   | _ -> t
 
 (* TODO binops, other things *)
-let resolve_literal l = match l with
+let rec resolve_literal l = match l with
   | Parsetree.Literal l ->
      begin match l with
      | Parsetree.LI8  i -> Ok (Int i)
@@ -162,8 +163,12 @@ let resolve_literal l = match l with
      | Parsetree.LF32 f -> Ok (Float f)
      | Parsetree.LF64 f -> Ok (Float f)
      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
-     | Parsetree.LString s -> Ok (String_ s)
+     | Parsetree.LString s -> Ok (GlobalString s)
      end
+  | Parsetree.BinOp (l, op, r) ->
+     let* l = resolve_literal l in
+     let* r = resolve_literal r in
+     Error "unimplemented"
   | _ -> Error "Error: Could not resolve static value at compile time"
 
 let get_ir_expr_type ir_exp = match ir_exp with
@@ -645,7 +650,7 @@ let construct_ir_tree ast symtab =
           Ok (scope_map, (TypeDef (t, "%" ^ name)) :: decls)
        end
     | Parsetree.TypeFwdDef _ -> Ok acc
-    | Parsetree.ValDecl vd ->
+    | Parsetree.ValDecl (pub, vd) ->
        let (name, expr) = match vd with
          | Parsetree.ValI (n, e)    -> (n, e)
          | Parsetree.Val  (n, _, e) -> (n, e)
@@ -655,13 +660,17 @@ let construct_ir_tree ast symtab =
        begin match (Symtab.SymtabM.find name symtab) with
        | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
        | Symtab.Value (_, type_, _) ->
-          let t = llvm_type_of_silktype type_ in
+          let t = match expr with
+            | Parsetree.Literal (Parsetree.LString s) ->
+               Array ((String.length s) + 1, I 8)
+            | _ -> llvm_type_of_silktype type_
+          in
           let resolved_name = "@" ^ name in
           let+ l = resolve_literal expr in
           (ScopeM.add name resolved_name scope_map,
-           (StaticDecl (t, resolved_name, l)) :: decls)
+           (StaticDecl (t, pub, resolved_name, l)) :: decls)
        end
-    | Parsetree.FuncDecl (name, args_, _, body) ->
+    | Parsetree.FuncDecl (pub, (name, args_, _, body)) ->
        let value_ = Symtab.SymtabM.find name symtab in
        begin match value_ with
        | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
@@ -694,7 +703,7 @@ let construct_ir_tree ast symtab =
                else ir_stmts
              in
              (scope_map_,
-              (FuncDecl (rt, resolved_name, args,
+              (FuncDecl (rt, pub, resolved_name, args,
                          ir_stmts @ arg_decl_stmts)) :: decls)
           | _ -> Error "Error: Function body is not a block"
           end
@@ -1152,7 +1161,7 @@ let rec serialize_type t = match t with
 let serialize_literal l = match l with
   | Int i -> string_of_int i
   | Float f -> string_of_float f
-  | String_ s ->
+  | String_ s | GlobalString s ->
      let string_of_list l =
        let buf = Buffer.create 16 in
        List.iter (Buffer.add_char buf) l;
@@ -1351,20 +1360,39 @@ let serialize_irt irt_roots =
     | v -> (serialize_value v) ^ " = " ^ (inst_str inst)
   in
 
-  let serialize_irt str_insts root =
+  let rec serialize_irt str_insts root =
     match root with
-    | StaticDecl (t, name, l) ->
-       let t_str = serialize_type t in
-       let l_str = serialize_literal l in
-       let s = String.concat " " [name; "="; "global"; t_str; l_str] in
-       Ok (s :: str_insts)
-    | FuncDecl (rt, funcname, args, body) ->
+    | StaticDecl (t, pub, name, l) ->
+       let access_str = if pub then "global" else "private global" in
+       begin match l with
+       | GlobalString s ->
+          let str_name = name ^ ".str" in
+          let+ str_insts =
+            serialize_irt str_insts @@ StaticDecl (t, false, str_name, String_ s)
+          in
+          let t1_str = serialize_type @@ Pointer t in
+          let t2_str = serialize_type @@ Pointer (I 8) in
+          let bc_str =
+            String.concat " " ["bitcast"; "("; t1_str; str_name; "to"; t2_str; ")"]
+          in
+          let s =
+            String.concat " " [name; "="; access_str; t2_str; bc_str]
+          in
+          s :: str_insts
+       | _ ->
+          let t_str = serialize_type t in
+          let l_str = serialize_literal l in
+          let s = String.concat " " [name; "="; access_str; t_str; l_str] in
+          Ok (s :: str_insts)
+       end
+    | FuncDecl (rt, pub, funcname, args, body) ->
        let t_str = serialize_type rt in
        let args_str = String.concat ", "
                         (List.map
                            (fun (t, n) -> (serialize_type t) ^ " " ^ n)
                            args) in
-       let ns = "define " ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
+       let access_str = if pub then "define " else "define private " in
+       let ns = access_str ^ t_str ^ " " ^ funcname ^ "(" ^ args_str ^ ") {" in
        let+ (_, _, _, _, insts, _) =
          Symtab.fold_left_bind
            codegen_stmt (None, None, 0, None, [], NoValue) (List.rev body)
