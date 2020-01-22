@@ -3,16 +3,6 @@
  * Parse tree definitions.
  *)
 
-type type_ = I8 | I16 | I32 | I64
-             | U8 | U16 | U32 | U64
-             | F32 | F64
-             | Function of type_ list * type_
-             | Pointer of type_ | MutPointer of type_
-             | Array of int * type_
-             | StructLabeled of bool * (string * type_) list
-             | Struct of bool * type_ list
-             | Void | Bool | TypeAlias of string
-
 type literal = LI8 of int | LI16 of int | LI32 of int | LI64 of int
                | LU8 of int | LU16 of int | LU32 of int | LU64 of int
                | LF32 of float | LF64 of float
@@ -37,6 +27,16 @@ type expr = Identifier of string | Literal of literal | Assignment of expr * exp
             | Index of expr * expr
             | StructMemberAccess of expr * string
             | StructIndexAccess of expr * int
+and type_ = I8 | I16 | I32 | I64
+             | U8 | U16 | U32 | U64
+             | F32 | F64
+             | Function of type_ list * type_
+             | Pointer of type_ | MutPointer of type_
+             | Array of int * type_
+             | StructLabeled of bool * (string * type_) list
+             | Struct of bool * type_ list
+             | Void | Bool | TypeAlias of string
+             | TypeOf of expr
 
 type val_decl = ValI of string * expr | Val of string * type_ * expr
                 | VarI of string * expr | Var of string * type_ * expr

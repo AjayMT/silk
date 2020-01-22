@@ -45,7 +45,9 @@ rule token = parse
 | "false"     { FALSE }
 | "struct"    { STRUCT }
 | "packed"    { PACKED }
+| "typeof"    { TYPEOF }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
+| "$" nonleadingChar+ as template      { TEMPLATE (template) }
 
 | decimalDigit+ "." decimalDigit+ "f" as f32_literal {
 F32_LITERAL (float_of_string
@@ -194,7 +196,6 @@ STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
 | ";"         { SEMICOLON }
 | ","         { COMMA }
 | "."         { DOT }
-| "$"         { TEMPLATE }
 | "@"         { DEREF }
 | ">>"        { RSHIFT }
 | "<<"        { LSHIFT }

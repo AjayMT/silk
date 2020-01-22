@@ -39,70 +39,6 @@ let rec find_symtab_stack name ststack = match ststack with
      | Some v -> Some v
      | None -> find_symtab_stack name zs
 
-let silktype_of_literal_type l = match l with
-  | Parsetree.LI8 _  -> I 8
-  | Parsetree.LI16 _ -> I 16
-  | Parsetree.LI32 _ -> I 32
-  | Parsetree.LI64 _ -> I 64
-  | Parsetree.LU8 _  -> U 8
-  | Parsetree.LU16 _ -> U 16
-  | Parsetree.LU32 _ -> U 32
-  | Parsetree.LU64 _ -> U 64
-  | Parsetree.LF32 _ -> F 32
-  | Parsetree.LF64 _ -> F 64
-  | Parsetree.LBool _ -> Bool
-  | Parsetree.LString _ -> Pointer (I 8)
-
-let rec silktype_of_asttype symtab_stack t = match t with
-  | Parsetree.I8  -> Ok (I 8)
-  | Parsetree.I16 -> Ok (I 16)
-  | Parsetree.I32 -> Ok (I 32)
-  | Parsetree.I64 -> Ok (I 64)
-  | Parsetree.U8  -> Ok (U 8)
-  | Parsetree.U16 -> Ok (U 16)
-  | Parsetree.U32 -> Ok (U 32)
-  | Parsetree.U64 -> Ok (U 64)
-  | Parsetree.F32 -> Ok (F 32)
-  | Parsetree.F64 -> Ok (F 64)
-  | Parsetree.Bool -> Ok Bool
-  | Parsetree.Void -> Ok Void
-  | Parsetree.Pointer t ->
-     let+ t = silktype_of_asttype symtab_stack t in Pointer t
-  | Parsetree.MutPointer t ->
-     let+ t = silktype_of_asttype symtab_stack t in MutPointer t
-  | Parsetree.Array (len, t) ->
-     let+ t = silktype_of_asttype symtab_stack t in Array (len, t)
-  | Parsetree.Struct (packed, types) ->
-     let add_type acc t =
-       let+ t = silktype_of_asttype symtab_stack t in
-       t :: acc
-     in
-     let+ types = fold_left_bind add_type [] types in
-     Struct (packed, List.rev types)
-  | Parsetree.StructLabeled (packed, members) ->
-     let (names, types) = List.split members in
-     let add_type acc t =
-       let+ t = silktype_of_asttype symtab_stack t in
-       t :: acc
-     in
-     let+ types = fold_left_bind add_type [] types in
-     StructLabeled (packed, List.combine names (List.rev types))
-  | Parsetree.Function (ats, rt) ->
-     let define_arg acc a =
-       let+ a = silktype_of_asttype symtab_stack a in
-       a :: acc
-     in
-     let* args_rev = fold_left_bind define_arg [] ats in
-     let args = List.rev args_rev in
-     let+ rt = silktype_of_asttype symtab_stack rt in
-     Function (args, rt)
-  | Parsetree.TypeAlias name ->
-     match find_symtab_stack name symtab_stack with
-     | Some (Type t) -> Ok (TypeAlias (name, t))
-     | Some (Value _) ->
-        Error ("Error: " ^ name ^ " is not a type")
-     | None -> Error ("Error: type " ^ name ^ " undefined")
-
 let rec resolve_type_alias t = match t with
   | TypeAlias (_, t) -> resolve_type_alias t
   | _ -> t
@@ -193,7 +129,73 @@ let rec check_valid_cast symtab_stack cast_t expr_t =
   | _ -> if compare_types cast_t expr_t then Ok ()
          else err
 
-let rec eval_expr_type symtab_stack expr =
+let silktype_of_literal_type l = match l with
+  | Parsetree.LI8 _  -> I 8
+  | Parsetree.LI16 _ -> I 16
+  | Parsetree.LI32 _ -> I 32
+  | Parsetree.LI64 _ -> I 64
+  | Parsetree.LU8 _  -> U 8
+  | Parsetree.LU16 _ -> U 16
+  | Parsetree.LU32 _ -> U 32
+  | Parsetree.LU64 _ -> U 64
+  | Parsetree.LF32 _ -> F 32
+  | Parsetree.LF64 _ -> F 64
+  | Parsetree.LBool _ -> Bool
+  | Parsetree.LString _ -> Pointer (I 8)
+
+let rec silktype_of_asttype symtab_stack t = match t with
+  | Parsetree.I8  -> Ok (I 8)
+  | Parsetree.I16 -> Ok (I 16)
+  | Parsetree.I32 -> Ok (I 32)
+  | Parsetree.I64 -> Ok (I 64)
+  | Parsetree.U8  -> Ok (U 8)
+  | Parsetree.U16 -> Ok (U 16)
+  | Parsetree.U32 -> Ok (U 32)
+  | Parsetree.U64 -> Ok (U 64)
+  | Parsetree.F32 -> Ok (F 32)
+  | Parsetree.F64 -> Ok (F 64)
+  | Parsetree.Bool -> Ok Bool
+  | Parsetree.Void -> Ok Void
+  | Parsetree.Pointer t ->
+     let+ t = silktype_of_asttype symtab_stack t in Pointer t
+  | Parsetree.MutPointer t ->
+     let+ t = silktype_of_asttype symtab_stack t in MutPointer t
+  | Parsetree.Array (len, t) ->
+     let+ t = silktype_of_asttype symtab_stack t in Array (len, t)
+  | Parsetree.Struct (packed, types) ->
+     let add_type acc t =
+       let+ t = silktype_of_asttype symtab_stack t in
+       t :: acc
+     in
+     let+ types = fold_left_bind add_type [] types in
+     Struct (packed, List.rev types)
+  | Parsetree.StructLabeled (packed, members) ->
+     let (names, types) = List.split members in
+     let add_type acc t =
+       let+ t = silktype_of_asttype symtab_stack t in
+       t :: acc
+     in
+     let+ types = fold_left_bind add_type [] types in
+     StructLabeled (packed, List.combine names (List.rev types))
+  | Parsetree.Function (ats, rt) ->
+     let define_arg acc a =
+       let+ a = silktype_of_asttype symtab_stack a in
+       a :: acc
+     in
+     let* args_rev = fold_left_bind define_arg [] ats in
+     let args = List.rev args_rev in
+     let+ rt = silktype_of_asttype symtab_stack rt in
+     Function (args, rt)
+  | Parsetree.TypeAlias name ->
+     begin match find_symtab_stack name symtab_stack with
+     | Some (Type t) -> Ok (TypeAlias (name, t))
+     | Some (Value _) ->
+        Error ("Error: " ^ name ^ " is not a type")
+     | None -> Error ("Error: type " ^ name ^ " undefined")
+     end
+  | Parsetree.TypeOf exp -> eval_expr_type symtab_stack exp
+
+and eval_expr_type symtab_stack expr =
   let compare_types = compare_types symtab_stack in
   let check_valid_cast = check_valid_cast symtab_stack in
 
@@ -468,7 +470,7 @@ let rec eval_expr_type symtab_stack expr =
      | Some t -> Ok t
      | None -> Error ("Error: Struct has no member at index " ^ (string_of_int idx))
 
-let trav_valdecl symtab symtab_stack types_tab vd =
+let trav_valdecl symtab symtab_stack vd =
   let check_inferred_type mut ident expr =
     match SymtabM.find_opt ident symtab with
     | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
@@ -481,9 +483,9 @@ let trav_valdecl symtab symtab_stack types_tab vd =
     match SymtabM.find_opt ident symtab with
     | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
     | None ->
-       let* lstype = silktype_of_asttype [types_tab] asttype in
+       let* lstype = silktype_of_asttype (symtab :: symtab_stack) asttype in
        let* rstype = eval_expr_type (symtab :: symtab_stack) expr in
-       if compare_types [types_tab] lstype rstype then
+       if compare_types (symtab :: symtab_stack) lstype rstype then
          Ok (SymtabM.add ident (Value (mut, lstype, None)) symtab)
        else
          Error ("Error: mismatched types in declaration of " ^ ident)
@@ -498,7 +500,7 @@ let trav_valdecl symtab symtab_stack types_tab vd =
      check_declared_type Var ident asttype expr
 
 
-let rec construct_block_symtab base_symtab symtab_stack types_tab rettype stmts =
+let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
   let addblk block_number symtab new_base blk =
     let new_symtab st = SymtabM.add (string_of_int block_number)
                           (Value (Val, Void, Some st))
@@ -506,7 +508,7 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab rettype stmts 
     in
     let+ st =
       construct_block_symtab
-        new_base (symtab :: symtab_stack) types_tab rettype blk
+        new_base (symtab :: symtab_stack) rettype blk
     in
     (block_number + 1, new_symtab st)
   in
@@ -516,7 +518,7 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab rettype stmts 
     match stmt with
     | Parsetree.Empty -> Ok (block_number, symtab)
     | Parsetree.Decl vd ->
-       let+ s = trav_valdecl symtab symtab_stack types_tab vd in
+       let+ s = trav_valdecl symtab symtab_stack vd in
        (block_number, s)
     | Parsetree.Expr exp ->
        let+ _ = eval_expr_type (symtab :: symtab_stack) exp in
@@ -556,7 +558,7 @@ let rec construct_block_symtab base_symtab symtab_stack types_tab rettype stmts 
        begin match forblk with
        | Parsetree.Block blk ->
           let* local_symtab =
-            trav_valdecl SymtabM.empty (symtab :: symtab_stack) types_tab vd
+            trav_valdecl SymtabM.empty (symtab :: symtab_stack) vd
           in
           let* condexp_t =
             eval_expr_type (local_symtab :: symtab :: symtab_stack) condexp
@@ -632,7 +634,7 @@ let construct_symtab ast =
        | None -> Ok (SymtabM.add ident (Type (TypeStub ident)) symtab)
        | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
        end
-    | Parsetree.ValDecl (_, vd) -> trav_valdecl symtab [] symtab vd
+    | Parsetree.ValDecl (_, vd) -> trav_valdecl symtab [] vd
     | Parsetree.FuncDecl (_, (ident, arglist, ret_asttype, body)) ->
        let* (new_symtab, ft) =
          trav_funcdecl symtab (ident, arglist, ret_asttype)
@@ -644,7 +646,7 @@ let construct_symtab ast =
             | Function (_, rt) -> rt
             | _ -> Void
           in
-          let+ st = construct_block_symtab new_symtab [nst] symtab rt blk in
+          let+ st = construct_block_symtab new_symtab [nst] rt blk in
           SymtabM.add ident (Value (Val, ft, Some st)) symtab
        | _ -> Error "Error: Not a block"
        end

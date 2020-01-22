@@ -233,9 +233,8 @@ let construct_ir_tree ast symtab =
        | None -> find_symtab_stack name zs
   in
 
-  let types_tab = symtab in
-
   let rec map_expr scope_map symtab_stack expr =
+    let types_tab_stack = symtab_stack @ [symtab] in
     match expr with
     | Parsetree.Identifier name ->
        let symbol = find_symtab_stack name symtab_stack in
@@ -314,7 +313,7 @@ let construct_ir_tree ast symtab =
        in
        resolve_assignment lval rexp
     | Parsetree.TypeCast (type_, expr) ->
-       let* silktype = Symtab.silktype_of_asttype [types_tab] type_ in
+       let* silktype = Symtab.silktype_of_asttype types_tab_stack type_ in
        let+ ir_expr = map_expr scope_map symtab_stack expr in
        let casttype = llvm_type_of_silktype silktype in
        let ir_expr_type = get_ir_expr_type ir_expr in
@@ -372,7 +371,7 @@ let construct_ir_tree ast symtab =
           begin match fexp with
           | Parsetree.Identifier t ->
              let* silkt =
-               Symtab.silktype_of_asttype [types_tab] (Parsetree.TypeAlias t)
+               Symtab.silktype_of_asttype types_tab_stack (Parsetree.TypeAlias t)
              in
              let type_ = resolve_alias @@ llvm_type_of_silktype silkt in
              let expr = match type_ with
@@ -451,7 +450,7 @@ let construct_ir_tree ast symtab =
        let types = List.map get_ir_expr_type elems in
        StructLiteral (Struct (packed, types), elems)
     | Parsetree.StructInit (pt, elems) ->
-       let* silkt = Symtab.silktype_of_asttype [types_tab] pt in
+       let* silkt = Symtab.silktype_of_asttype types_tab_stack pt in
        let t = llvm_type_of_silktype silkt in
        let check_elem acc elem =
          let+ exp = map_expr scope_map symtab_stack elem in
@@ -485,7 +484,7 @@ let construct_ir_tree ast symtab =
        let elem_type = get_ir_expr_type (List.hd elems) in
        ArrayElems (Array (List.length elems, elem_type), List.rev elems)
     | Parsetree.ArrayInit (t, len) ->
-       let* t = Symtab.silktype_of_asttype [types_tab] t in
+       let* t = Symtab.silktype_of_asttype types_tab_stack t in
        Ok (ArrayInit (Array (len, llvm_type_of_silktype t)))
     | Parsetree.Index (array_exp, idx_exp) ->
        let* array = map_expr scope_map symtab_stack array_exp in

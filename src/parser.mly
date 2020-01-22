@@ -4,6 +4,7 @@
 %{ open Parsetree %}
 
 %token <string> IDENTIFIER
+%token <string> TEMPLATE
 %token <int> I8_LITERAL
 %token <int> I16_LITERAL
 %token <int> I32_LITERAL
@@ -30,9 +31,8 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA DOT COLON SEMICOLON
 %token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED
-%token TYPE VAL VAR FUNC EXTERN PRIVATE
+%token TYPE TYPEOF VAL VAR FUNC EXTERN PRIVATE
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
-%token TEMPLATE
 %token EOF
 
 %nonassoc EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
@@ -145,6 +145,7 @@ type_: base_type { $1 }
   | IDENTIFIER   { TypeAlias $1 }
   | FUNC LPAREN type_list RPAREN type_  { Function ($3, $5) }
   | FUNC LPAREN RPAREN type_            { Function ([], $4) }
+  | TYPEOF LPAREN expr RPAREN           { TypeOf $3 }
   | LPAREN type_ RPAREN { $2 }
 ;
 
@@ -184,6 +185,7 @@ _type_list: type_          { [$1] }
 
 cast_type: base_type        { $1 }
   | pointer_type            { $1 }
+  | TYPEOF LPAREN expr RPAREN           { TypeOf $3 }
   | LPAREN cast_type RPAREN { $2 }
 ;
 
