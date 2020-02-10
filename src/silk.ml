@@ -1,10 +1,10 @@
 
-open Symtab
+let ( let* ) x f = Result.bind x f
 
 let _ =
   try
     let lexbuf = Lexing.from_channel stdin in
-    let ast = Parser.file Lexer.token lexbuf in
+    let ast = Template.process_file @@ Parser.file Lexer.token lexbuf in
     let ir_tree = Result.bind
                     (Symtab.construct_symtab ast)
                     (Codegen.construct_ir_tree ast)

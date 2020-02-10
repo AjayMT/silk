@@ -26,12 +26,6 @@ type symbol = Value of valness * silktype * symbol SymtabM.t option
 let ( let* ) x f = Result.bind x f
 let ( let+ ) x f = Result.map f x
 
-let rec fold_left_bind f acc l = match l with
-  | [] -> Ok acc
-  | (x :: xs) ->
-     let* a = f acc x in
-     fold_left_bind f a xs
-
 let rec find_symtab_stack name ststack = match ststack with
   | [] -> None
   | (z :: zs) ->
@@ -167,7 +161,7 @@ let rec silktype_of_asttype symtab_stack t = match t with
        let+ t = silktype_of_asttype symtab_stack t in
        t :: acc
      in
-     let+ types = fold_left_bind add_type [] types in
+     let+ types = Util.flb add_type [] types in
      Struct (packed, List.rev types)
   | Parsetree.StructLabeled (packed, members) ->
      let (names, types) = List.split members in
@@ -175,14 +169,14 @@ let rec silktype_of_asttype symtab_stack t = match t with
        let+ t = silktype_of_asttype symtab_stack t in
        t :: acc
      in
-     let+ types = fold_left_bind add_type [] types in
+     let+ types = Util.flb add_type [] types in
      StructLabeled (packed, List.combine names (List.rev types))
   | Parsetree.Function (ats, rt) ->
      let define_arg acc a =
        let+ a = silktype_of_asttype symtab_stack a in
        a :: acc
      in
-     let* args_rev = fold_left_bind define_arg [] ats in
+     let* args_rev = Util.flb define_arg [] ats in
      let args = List.rev args_rev in
      let+ rt = silktype_of_asttype symtab_stack rt in
      Function (args, rt)
@@ -194,6 +188,10 @@ let rec silktype_of_asttype symtab_stack t = match t with
      | None -> Error ("Error: type " ^ name ^ " undefined")
      end
   | Parsetree.TypeOf exp -> eval_expr_type symtab_stack exp
+  | Parsetree.AliasTemplateInstance _ ->
+     let name = Template.serialize_type t in
+     silktype_of_asttype symtab_stack (Parsetree.TypeAlias name)
+  | Parsetree.Template n -> Error ("Error: Failed to replace template " ^ n)
 
 and eval_expr_type symtab_stack expr =
   let compare_types = compare_types symtab_stack in
@@ -221,6 +219,12 @@ and eval_expr_type symtab_stack expr =
   in
 
   match expr with
+  | Parsetree.TemplateInstance (name, types) ->
+     let name =
+       Template.serialize_type @@
+         Parsetree.AliasTemplateInstance (name, types)
+     in
+     eval_expr_type symtab_stack @@ Parsetree.Identifier name
   | Parsetree.Identifier name ->
      begin match find_symtab_stack name symtab_stack with
      | Some (Type _) -> Error ("Error: Expected value, found type: " ^ name)
@@ -300,30 +304,35 @@ and eval_expr_type symtab_stack expr =
      begin match (eval_expr_type symtab_stack f) with
      | Ok t -> check_function_type t
      | Error e ->
-        begin match f with
-        | Parsetree.Identifier t ->
-           let* silktype =
-             silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
-           in
-           begin match (resolve_type_alias silktype) with
-           | Struct (_, l) ->
-              if List.length args <> List.length l
-              then Error "Error: Incorrect number of members in struct initialization"
-              else eval_expr_type symtab_stack
-                     (Parsetree.StructInit (Parsetree.TypeAlias t, args))
-           | StructLabeled (_, l) ->
-              if List.length args <> List.length l
-              then Error "Error: Incorrect number of members in struct initialization"
-              else eval_expr_type symtab_stack
-                     (Parsetree.StructInit (Parsetree.TypeAlias t, args))
-           | _ ->
-              if List.length args <> 1
-              then Error "Error: Invalid type cast expression"
-              else eval_expr_type symtab_stack
-                     (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd args))
-           end
-        | _ -> Error e
-        end
+        let rec process_fexp f =  match f with
+          | Parsetree.TemplateInstance (name, types) ->
+             let name =
+               Template.serialize_type @@
+                 Parsetree.AliasTemplateInstance (name, types)
+             in process_fexp @@ Parsetree.Identifier name
+          | Parsetree.Identifier t ->
+             let* silktype =
+               silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
+             in
+             begin match (resolve_type_alias silktype) with
+             | Struct (_, l) ->
+                if List.length args <> List.length l
+                then Error "Error: Incorrect number of members in struct initialization"
+                else eval_expr_type symtab_stack
+                       (Parsetree.StructInit (Parsetree.TypeAlias t, args))
+             | StructLabeled (_, l) ->
+                if List.length args <> List.length l
+                then Error "Error: Incorrect number of members in struct initialization"
+                else eval_expr_type symtab_stack
+                       (Parsetree.StructInit (Parsetree.TypeAlias t, args))
+             | _ ->
+                if List.length args <> 1
+                then Error "Error: Invalid type cast expression"
+                else eval_expr_type symtab_stack
+                       (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd args))
+             end
+          | _ -> Error e
+        in process_fexp f
      end
   | Parsetree.BinOp (a, op, b) ->
      let* a_type = eval_expr_type symtab_stack a in
@@ -402,7 +411,7 @@ and eval_expr_type symtab_stack expr =
        let+ t = eval_expr_type symtab_stack expr in
        t :: acc
      in
-     let+ types = fold_left_bind add_expr [] exprs in
+     let+ types = Util.flb add_expr [] exprs in
      Struct (packed, List.rev types)
   | Parsetree.StructInit (t, exprs) ->
      let* t = silktype_of_asttype symtab_stack t in
@@ -422,7 +431,7 @@ and eval_expr_type symtab_stack expr =
        if compare_types et t then Ok ()
        else Error "Error: Mismatched types in struct initialization"
      in
-     let+ () = fold_left_bind add_member () (List.combine exprs member_types) in
+     let+ () = Util.flb add_member () (List.combine exprs member_types) in
      t
 
   | Parsetree.ArrayElems [] -> Error "Error: Empty array initializer"
@@ -433,7 +442,7 @@ and eval_expr_type symtab_stack expr =
        else Error "Error: Mismatched types in array initializer"
      in
      let* head_type = eval_expr_type symtab_stack head in
-     let+ elem_type = fold_left_bind check_elem head_type tail in
+     let+ elem_type = Util.flb check_elem head_type tail in
      Array (List.length (head :: tail), elem_type)
   | Parsetree.ArrayInit (t, len) ->
      let* t = silktype_of_asttype symtab_stack t in
@@ -587,7 +596,7 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
        end
     | Parsetree.Continue | Parsetree.Break -> Ok (block_number, symtab)
   in
-  let+ (_, s) = fold_left_bind trav_stmt (0, base_symtab) stmts in s
+  let+ (_, s) = Util.flb trav_stmt (0, base_symtab) stmts in s
 
 let construct_symtab ast =
   let trav_funcdecl symtab (ident, arglist, ret_asttype) =
@@ -605,7 +614,7 @@ let construct_symtab ast =
          end
        in
        let* (new_symtab, argtypes_r) =
-         fold_left_bind define_arg (SymtabM.empty, []) arglist
+         Util.flb define_arg (SymtabM.empty, []) arglist
        in
        let argtypes = List.rev argtypes_r in
        let* rettype = silktype_of_asttype [symtab] ret_asttype in
@@ -653,5 +662,7 @@ let construct_symtab ast =
     | Parsetree.FuncFwdDecl (ident, arglist, ret_asttype, _) ->
        let+ (_, ft) = trav_funcdecl symtab (ident, arglist, ret_asttype) in
        SymtabM.add ident (Value (Val, ft, None)) symtab
+
+    | _ -> Ok symtab
   in
-  fold_left_bind trav_ast SymtabM.empty ast
+  Util.flb trav_ast SymtabM.empty ast

@@ -35,7 +35,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
 
-%nonassoc EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
+%right EQ RSHIFT_ASSIGN LSHIFT_ASSIGN BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN
 ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %left RSHIFT LSHIFT BIT_AND BIT_OR BIT_XOR
 %left AND OR
@@ -61,53 +61,68 @@ _translation_unit: top_decl         { [$1] }
   | _translation_unit top_decl      { $2 :: $1 }
 ;
 
-top_decl: type_def       { TypeDef $1 }
-  | type_fwd_def         { TypeFwdDef $1 }
-  | val_decl             { ValDecl (true, $1) }
-  | PRIVATE val_decl     { ValDecl (false, $2) }
-  | func_decl            { FuncDecl (true, $1) }
-  | PRIVATE func_decl    { FuncDecl (false, $2) }
-  | func_fwd_decl        { FuncFwdDecl $1 }
+template_list: _template_list     { List.rev $1 }
+;
+_template_list: TEMPLATE          { [$1] }
+  | _template_list COMMA TEMPLATE { $3 :: $1 }
+;
+
+top_decl: type_def        { TypeDef $1 }
+  | template_type_def     { TemplateTypeDef $1 }
+  | type_fwd_def          { TypeFwdDef $1 }
+  | template_type_fwd_def { TemplateTypeFwdDef $1 }
+  | val_decl              { ValDecl (true, $1) }
+  | PRIVATE val_decl      { ValDecl (false, $2) }
+  | func_decl             { FuncDecl (true, $1) }
+  | PRIVATE func_decl     { FuncDecl (false, $2) }
+  | func_fwd_decl         { FuncFwdDecl $1 }
 ;
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
 ;
+template_type_def: TYPE IDENTIFIER LESSTHAN template_list GREATERTHAN
+EQ type_ SEMICOLON { ($4, ($2, $7)) }
+;
 
 type_fwd_def: TYPE IDENTIFIER SEMICOLON { $2 }
 ;
+template_type_fwd_def: TYPE IDENTIFIER LESSTHAN template_list GREATERTHAN
+SEMICOLON { ($4, $2) }
+;
 
-val_decl: VAL IDENTIFIER EQ expr SEMICOLON       { ValI ($2, $4) }
-  | VAL IDENTIFIER COLON type_ EQ expr SEMICOLON { Val ($2, $4, $6) }
-  | VAR IDENTIFIER EQ expr SEMICOLON             { VarI ($2, $4) }
-  | VAR IDENTIFIER COLON type_ EQ expr SEMICOLON { Var ($2, $4, $6) }
+
+val_decl: VAL IDENTIFIER EQ expr SEMICOLON { ValI ($2, $4) }
+  | VAL IDENTIFIER type_ EQ expr SEMICOLON { Val ($2, $3, $5) }
+  | VAR IDENTIFIER EQ expr SEMICOLON       { VarI ($2, $4) }
+  | VAR IDENTIFIER type_ EQ expr SEMICOLON { Var ($2, $3, $5) }
 ;
 
 func_fwd_decl: FUNC IDENTIFIER
-LPAREN argument_list RPAREN COLON type_
-SEMICOLON                                { ($2, $4, $7, false) }
+LPAREN argument_list RPAREN type_
+SEMICOLON                                { ($2, $4, $6, false) }
   | FUNC IDENTIFIER
-LPAREN RPAREN COLON type_
-SEMICOLON                                { ($2, [], $6, false) }
+LPAREN RPAREN type_
+SEMICOLON                                { ($2, [], $5, false) }
   | EXTERN FUNC IDENTIFIER
-LPAREN argument_list RPAREN COLON type_
-SEMICOLON                                { ($3, $5, $8, true) }
+LPAREN argument_list RPAREN type_
+SEMICOLON                                { ($3, $5, $7, true) }
   | EXTERN FUNC IDENTIFIER
-LPAREN RPAREN COLON type_
-SEMICOLON                                { ($3, [], $7, true) }
+LPAREN RPAREN type_
+SEMICOLON                                { ($3, [], $6, true) }
 ;
 
 func_decl: FUNC IDENTIFIER
-LPAREN argument_list RPAREN COLON type_
-compound_statement                       { ($2, $4, $7, $8) }
+LPAREN argument_list RPAREN type_
+compound_statement                       { ($2, $4, $6, $7) }
   | FUNC IDENTIFIER
-LPAREN RPAREN COLON type_
-compound_statement                       { ($2, [], $6, $7) }
+LPAREN RPAREN type_
+compound_statement                       { ($2, [], $5, $6) }
 ;
 
 argument_list: _argument_list                   { List.rev $1 }
 ;
-_argument_list: IDENTIFIER COLON type_          { [($1, $3)] }
-  | _argument_list COMMA IDENTIFIER COLON type_ { ($3, $5) :: $1 }
+_argument_list: IDENTIFIER type_          { [($1, $2)] }
+  | _argument_list COMMA IDENTIFIER type_ { ($3, $4) :: $1 }
 ;
 
 statement: SEMICOLON              { Empty }
@@ -143,6 +158,8 @@ type_: base_type { $1 }
   | LBRACKET I32_LITERAL RBRACKET type_ { Array ($2, $4) }
   | struct_type  { $1 }
   | IDENTIFIER   { TypeAlias $1 }
+  | TEMPLATE     { Template $1 }
+  | IDENTIFIER LESSTHAN type_list GREATERTHAN { AliasTemplateInstance ($1, $3) }
   | FUNC LPAREN type_list RPAREN type_  { Function ($3, $5) }
   | FUNC LPAREN RPAREN type_            { Function ([], $4) }
   | TYPEOF LPAREN expr RPAREN           { TypeOf $3 }
@@ -185,13 +202,15 @@ _type_list: type_          { [$1] }
 
 cast_type: base_type        { $1 }
   | pointer_type            { $1 }
-  | TYPEOF LPAREN expr RPAREN           { TypeOf $3 }
-  | LPAREN cast_type RPAREN { $2 }
+  | TEMPLATE                { Template $1 }
+  | TYPEOF LPAREN expr RPAREN { TypeOf $3 }
+  | LPAREN cast_type RPAREN   { $2 }
 ;
 
 deref_expr: IDENTIFIER { Identifier $1 }
   | literal            { Literal $1 }
   | LPAREN expr RPAREN { $2 }
+  | IDENTIFIER LESSTHAN type_list GREATERTHAN { TemplateInstance ($1, $3) }
 
   | LPAREN struct_expr_list RPAREN             { StructLiteral (false, $2) }
   | LPAREN COLON struct_expr_list COLON RPAREN { StructLiteral (true, $3) }
