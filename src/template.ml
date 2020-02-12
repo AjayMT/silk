@@ -45,6 +45,9 @@ let rec serialize_type t = match t with
      name ^ "<" ^ (String.concat "," @@ List.map serialize_type ts) ^ ">"
   | TypeOf expr -> "" (* TODO this is a big yikes *)
 
+let serialize_instance name types =
+  serialize_type @@ AliasTemplateInstance (name, types)
+
 let rec map_stmt tmap s =
   let map_vd tmap vd = match vd with
     | ValI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
@@ -153,109 +156,126 @@ and map_type tmap t =
   | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64
     | Void | Bool | TypeAlias _ -> Ok t
 
-let add_object f decls os o =
-  let (decls, o) = f decls o in
+let create_decl name types decls =
+  let alias_name = serialize_instance name types in
+  let add_template tmap (name, type_) = TemplateM.add name type_ tmap
+  in
+  let tmap templates =
+    List.fold_left add_template TemplateM.empty @@
+      List.combine templates types
+  in
+  match Util.assoc alias_name decls with
+  | Some _ -> Ok decls
+  | None ->
+     (* TODO re-traverse new top decl *)
+     let rec create l = match Util.assoc name l with
+       | Some (TemplateTypeDef (templates, (_, type_)), l) ->
+          let* t = map_type (tmap templates) type_ in
+          let+ decls = create l in
+          (alias_name, TypeDef (alias_name, t)) :: decls
+       | Some (TemplateTypeFwdDef (_, name), l) ->
+          Ok ((alias_name, TypeFwdDef alias_name) :: decls)
+       | Some ((TemplateFuncDecl (pub, (templates, (_, args, rt, body)))), l) ->
+          let* body = map_stmt (tmap templates) body in
+          let* rt = map_type (tmap templates) rt in
+          let (argnames, argtypes) = List.split args in
+          let* argtypes = Util.map_join (map_type (tmap templates)) argtypes in
+          let args = List.combine argnames argtypes in
+          let+ decls = create l in
+          (alias_name, FuncDecl (pub, (alias_name, args, rt, body))) :: decls
+       | Some ((TemplateFuncFwdDecl (templates, (name, args, rt, ext))), l) ->
+          let* rt = map_type (tmap templates) rt in
+          let (argnames, argtypes) = List.split args in
+          let+ argtypes = Util.map_join (map_type (tmap templates)) argtypes in
+          let args = List.combine argnames argtypes in
+          (alias_name, FuncFwdDecl (alias_name, args, rt, ext)) :: decls
+       | _ -> Ok decls
+     in create decls
+
+let add_object f (decls, os) o =
+  let+ (decls, o) = f decls o in
   decls, o :: os
 
 let rec trav_type decls t = match t with
   | I8 | I16 | I32 | I64
     | U8 | U16 | U32 | U64
-    | F32 | F64 | Void | Bool | TypeAlias _ | Template _ -> decls, t
+    | F32 | F64 | Void | Bool | TypeAlias _ | Template _ -> Ok (decls, t)
   | Function (ts, rt) ->
-     let (decls, ts) = Util.f2l (add_object trav_type) decls [] ts in
-     let (decls, rt) = trav_type decls rt in
+     let* (decls, ts) = Util.flb (add_object trav_type) (decls, []) ts in
+     let+ (decls, rt) = trav_type decls rt in
      decls, Function (List.rev ts, rt)
   | Pointer t ->
-     let (decls, t) = trav_type decls t in
+     let+ (decls, t) = trav_type decls t in
      decls, Pointer t
   | MutPointer t ->
-     let (decls, t) = trav_type decls t in
+     let+ (decls, t) = trav_type decls t in
      decls, MutPointer t
   | Array (i, t) ->
-     let (decls, t) = trav_type decls t in
+     let+ (decls, t) = trav_type decls t in
      decls, Array (i, t)
   | StructLabeled (packed, members) ->
      let (names, ts) = List.split members in
-     let (decls, ts) = Util.f2l (add_object trav_type) decls [] ts in
+     let+ (decls, ts) = Util.flb (add_object trav_type) (decls, []) ts in
      let members = List.combine names @@ List.rev ts in
      decls, StructLabeled (packed, members)
   | Struct (packed, ts) ->
-     let (decls, ts) = Util.f2l (add_object trav_type) decls [] ts in
+     let+ (decls, ts) = Util.flb (add_object trav_type) (decls, []) ts in
      decls, Struct (packed, List.rev ts)
   | TypeOf e ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, TypeOf e
 
   | AliasTemplateInstance (name, types) ->
-     (* TODO *)
-     let rec create_td l = match Util.assoc name l with
-       | Some (TemplateTypeDef (templates, (name, type_)), _) ->
-          let add_template tmap (name, type_) = TemplateM.add name type_ tmap
-          in
-          let tmap =
-            List.fold_left add_template TemplateM.empty @@
-              List.combine templates types
-          in
-          let t = map_type tmap type_ in
-          (* TODO move everything into result monad? *)
-          begin match t with
-          | Ok t ->
-             let n = serialize_type @@ AliasTemplateInstance (name, types) in
-             (((n, TypeDef (n, t)) :: decls), AliasTemplateInstance (name, types))
-          | Error _ -> decls, AliasTemplateInstance (name, types)
-          end
-       | Some (TemplateTypeFwdDef _, l) -> create_td l
-       | _ -> decls, t
-     in
-     create_td decls
+     let+ decls = create_decl name types decls in
+     decls, t
 
 and trav_expr decls e = match e with
-  | Identifier _ | Literal _ -> decls, e
+  | Identifier _ | Literal _ -> Ok (decls, e)
   | Assignment (l, r) ->
-     let (decls, r) = trav_expr decls r in
-     let (decls, l) = trav_expr decls l in
+     let* (decls, r) = trav_expr decls r in
+     let+ (decls, l) = trav_expr decls l in
      decls, Assignment (l, r)
   | StructLiteral (packed, es) ->
-     let (decls, es) = Util.f2l (add_object trav_expr) decls [] es in
+     let+ (decls, es) = Util.flb (add_object trav_expr) (decls, []) es in
      decls, StructLiteral (packed, List.rev es)
   | StructInit (t, es) ->
-     let (decls, t) = trav_type decls t in
-     let (decls, es) = Util.f2l (add_object trav_expr) decls [] es in
+     let* (decls, t) = trav_type decls t in
+     let+ (decls, es) = Util.flb (add_object trav_expr) (decls, []) es in
      decls, StructInit (t, List.rev es)
   | ArrayElems es ->
-     let (decls, es) = Util.f2l (add_object trav_expr) decls [] es in
+     let+ (decls, es) = Util.flb (add_object trav_expr) (decls, []) es in
      decls, ArrayElems (List.rev es)
   | ArrayInit (t, i) ->
-     let (decls, t) = trav_type decls t in
+     let+ (decls, t) = trav_type decls t in
      decls, ArrayInit (t, i)
   | FunctionCall (e, es) ->
-     let (decls, e) = trav_expr decls e in
-     let (decls, es) = Util.f2l (add_object trav_expr) decls [] es in
+     let* (decls, e) = trav_expr decls e in
+     let+ (decls, es) = Util.flb (add_object trav_expr) (decls, []) es in
      decls, FunctionCall (e, List.rev es)
   | TypeCast (t, e) ->
-     let (decls, t) = trav_type decls t in
-     let (decls, e) = trav_expr decls e in
+     let* (decls, t) = trav_type decls t in
+     let+ (decls, e) = trav_expr decls e in
      decls, TypeCast (t, e)
   | BinOp (l, o, r) ->
-     let (decls, l) = trav_expr decls l in
-     let (decls, r) = trav_expr decls r in
+     let* (decls, l) = trav_expr decls l in
+     let+ (decls, r) = trav_expr decls r in
      decls, BinOp (l, o, r)
   | UnOp (o, e) ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, UnOp (o, e)
   | Index (a, b) ->
-     let (decls, a) = trav_expr decls a in
-     let (decls, b) = trav_expr decls b in
+     let* (decls, a) = trav_expr decls a in
+     let+ (decls, b) = trav_expr decls b in
      decls, Index (a, b)
   | StructMemberAccess (e, s) ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, StructMemberAccess (e, s)
   | StructIndexAccess (e, i) ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, StructIndexAccess (e, i)
 
   | TemplateInstance (name, types) ->
-     (* TODO *)
+     let+ decls = create_decl name types decls in
      decls, e
 
 let trav_vd decls vd =
@@ -265,7 +285,7 @@ let trav_vd decls vd =
     | Var (name, _, expr) -> (name, expr)
     | VarI (name, expr) -> (name, expr)
   in
-  let (decls, expr) = trav_expr decls expr in
+  let+ (decls, expr) = trav_expr decls expr in
   decls,
   match vd with
   | Val (name, t, _) -> Val (name, t, expr)
@@ -275,40 +295,40 @@ let trav_vd decls vd =
 
 
 let rec trav_stmt decls s = match s with
-  | Empty | Continue | Break | Return None -> decls, s
+  | Empty | Continue | Break | Return None -> Ok (decls, s)
   | Decl vd ->
-     let (decls, vd) = trav_vd decls vd in
+     let+ (decls, vd) = trav_vd decls vd in
      decls, Decl vd
   | Expr e ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, Expr e
   | Block ss ->
-     let (decls, ss) = Util.f2l (add_object trav_stmt) decls [] ss in
+     let+ (decls, ss) = Util.flb (add_object trav_stmt) (decls, []) ss in
      decls, Block (List.rev ss)
   | IfElse (e, s1, s2) ->
-     let (decls, e) = trav_expr decls e in
-     let (decls, s1) = trav_stmt decls s1 in
-     let (decls, s2) = trav_stmt decls s2 in
+     let* (decls, e) = trav_expr decls e in
+     let* (decls, s1) = trav_stmt decls s1 in
+     let+ (decls, s2) = trav_stmt decls s2 in
      decls, IfElse (e, s1, s2)
   | While (e, s) ->
-     let (decls, e) = trav_expr decls e in
-     let (decls, s) = trav_stmt decls s in
+     let* (decls, e) = trav_expr decls e in
+     let+ (decls, s) = trav_stmt decls s in
      decls, While (e, s)
   | For (vd, e1, e2, s) ->
-     let (decls, vd) = trav_vd decls vd in
-     let (decls, e1) = trav_expr decls e1 in
-     let (decls, e2) = trav_expr decls e2 in
-     let (decls, s) = trav_stmt decls s in
+     let* (decls, vd) = trav_vd decls vd in
+     let* (decls, e1) = trav_expr decls e1 in
+     let* (decls, e2) = trav_expr decls e2 in
+     let+ (decls, s) = trav_stmt decls s in
      decls, For (vd, e1, e2, s)
   | Return (Some e) ->
-     let (decls, e) = trav_expr decls e in
+     let+ (decls, e) = trav_expr decls e in
      decls, Return (Some e)
 
 let trav_top_decl decls decl = match decl with
   | TypeDef (name, t) ->
-     let (decls, t) = trav_type decls t in
+     let+ (decls, t) = trav_type decls t in
      (name, TypeDef (name, t)) :: decls
-  | TypeFwdDef name -> (name, decl) :: decls
+  | TypeFwdDef name -> Ok ((name, decl) :: decls)
 
   | ValDecl (pub, vd) ->
      let (name, expr) = match vd with
@@ -317,29 +337,38 @@ let trav_top_decl decls decl = match decl with
        | Var (name, _, expr) -> (name, expr)
        | VarI (name, expr) -> (name, expr)
      in
-     let (decls, vd) = trav_vd decls vd in
+     let+ (decls, vd) = trav_vd decls vd in
      (name, ValDecl (pub, vd)) :: decls
 
   | FuncDecl (pub, fd) ->
      let (name, args, rettype, body) = fd in
-     let (decls, rettype) = trav_type decls rettype in
-     let add_arg decls args arg =
+     let* (decls, rettype) = trav_type decls rettype in
+     let add_arg (decls, args) arg =
        let (name, t) = arg in
-       let (decls, t) = trav_type decls t in
+       let+ (decls, t) = trav_type decls t in
        (decls, (name, t) :: args)
      in
-     let (decls, args) = Util.f2l add_arg decls [] args in
+     let* (decls, args) = Util.flb add_arg (decls, []) args in
      let args = List.rev args in
-     let (decls, body) = trav_stmt decls body in
+     let+ (decls, body) = trav_stmt decls body in
      (name, FuncDecl (pub, (name, args, rettype, body))) :: decls
+  | FuncFwdDecl (name, args, rettype, extern) ->
+     let* (decls, rettype) = trav_type decls rettype in
+     let add_arg (decls, args) arg =
+       let (name, t) = arg in
+       let+ (decls, t) = trav_type decls t in
+       (decls, (name, t) :: args)
+     in
+     let+ (decls, args) = Util.flb add_arg (decls, []) args in
+     let args = List.rev args in
+     (name, FuncFwdDecl (name, args, rettype, extern)) :: decls
 
-  | TemplateTypeDef (_, (name, _)) -> (name, decl) :: decls
-  | TemplateTypeFwdDef (_, name) -> (name, decl) :: decls
+  | TemplateTypeDef (_, (name, _)) -> Ok ((name, decl) :: decls)
+  | TemplateTypeFwdDef (_, name) -> Ok ((name, decl) :: decls)
 
-  (* TODO *)
-  | _ -> decls
+  | TemplateFuncDecl (_, (_, (name, _, _, _))) -> Ok ((name, decl) :: decls)
+  | TemplateFuncFwdDecl (_, (name, _, _, _)) -> Ok ((name, decl) :: decls)
 
 let process_file f =
-  let (_, f) =
-    List.split @@ List.rev @@ List.fold_left trav_top_decl [] f
-  in f
+  let+ decls = Util.flb trav_top_decl [] f in
+  (fun (_, a) -> a) @@ List.split @@ List.rev decls

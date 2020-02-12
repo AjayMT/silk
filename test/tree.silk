@@ -1,10 +1,10 @@
 
-type node;
-type node = struct(value: i32, left: mut*node, right: mut*node);
-type bintree = struct(node);
+type node<$t>;
+type node<$t> = struct(value $t, left mut*node<$t>, right mut*node<$t>);
+type bintree<$t> = struct(node<$t>);
 
-func bintree_create(value: i32): bintree {
-  var n = [node; 1];
-  var a = node(value, &n[0], mut*node(0));
-  return bintree(a);
+func bintree_create(value i32) bintree<i32> {
+  var n = [node<i32>; 1];
+  var a = node<i32>(value, &n[0], mut*node<i32>(0));
+  return bintree<i32>(a);
 }

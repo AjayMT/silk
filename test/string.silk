@@ -1,5 +1,7 @@
 
-extern func printf(s *i8) i32;
+type ptr<$t> = *$t;
+
+extern func printf(s ptr<i8>) i32;
 
 func main() i32 {
   printf("hello, world\n");

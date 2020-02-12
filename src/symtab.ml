@@ -220,10 +220,7 @@ and eval_expr_type symtab_stack expr =
 
   match expr with
   | Parsetree.TemplateInstance (name, types) ->
-     let name =
-       Template.serialize_type @@
-         Parsetree.AliasTemplateInstance (name, types)
-     in
+     let name = Template.serialize_instance name types in
      eval_expr_type symtab_stack @@ Parsetree.Identifier name
   | Parsetree.Identifier name ->
      begin match find_symtab_stack name symtab_stack with
@@ -306,10 +303,8 @@ and eval_expr_type symtab_stack expr =
      | Error e ->
         let rec process_fexp f =  match f with
           | Parsetree.TemplateInstance (name, types) ->
-             let name =
-               Template.serialize_type @@
-                 Parsetree.AliasTemplateInstance (name, types)
-             in process_fexp @@ Parsetree.Identifier name
+             let name = Template.serialize_instance name types in
+             process_fexp @@ Parsetree.Identifier name
           | Parsetree.Identifier t ->
              let* silktype =
                silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
@@ -354,7 +349,7 @@ and eval_expr_type symtab_stack expr =
         end
      | Equal | LessThan | GreaterThan ->
         begin match (a_type, b_type) with
-        | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
+        | (I a, I b) | (U a, U b) -> if a = b then Ok Bool else err
         | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
            Ok Bool
         | _ -> err

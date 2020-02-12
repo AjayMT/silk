@@ -131,7 +131,11 @@ let rec llvm_type_of_silktype t =
   | Symtab.Pointer t | Symtab.MutPointer t -> Pointer (llvm_type_of_silktype t)
   | Symtab.Array (len, t) -> Array (len, llvm_type_of_silktype t)
   | Symtab.TypeAlias (n, t) ->
-     Alias (llvm_type_of_silktype t, "%" ^ "\"" ^ n ^ "\"")
+     begin match t with
+     | Symtab.TypeAlias (n, t) ->
+        Alias (llvm_type_of_silktype t, "%" ^ "\"" ^ n ^ "\"")
+     | _ -> Alias (llvm_type_of_silktype t, "%" ^ "\"" ^ n ^ "\"")
+     end
   | Symtab.Struct (packed, types) ->
      Struct (packed, List.map llvm_type_of_silktype types)
   | Symtab.StructLabeled (packed, pairs) ->
@@ -247,10 +251,7 @@ let construct_ir_tree ast symtab =
        | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
     | Parsetree.TemplateInstance (name, types) ->
-       let name =
-         Template.serialize_type @@
-           Parsetree.AliasTemplateInstance (name, types)
-       in
+       let name = Template.serialize_instance name types in
        map_expr scope_map symtab_stack @@ Parsetree.Identifier name
     | Parsetree.Literal l ->
        begin match l with
@@ -377,10 +378,8 @@ let construct_ir_tree ast symtab =
        | Error e ->
           let rec process_fexp f = match f with
             | Parsetree.TemplateInstance (name, types) ->
-               let name =
-                 Template.serialize_type @@
-                   Parsetree.AliasTemplateInstance (name, types)
-               in process_fexp @@ Parsetree.Identifier name
+               let name = Template.serialize_instance name types in
+               process_fexp @@ Parsetree.Identifier name
             | Parsetree.Identifier t ->
                let* silkt =
                  Symtab.silktype_of_asttype types_tab_stack (Parsetree.TypeAlias t)
@@ -522,11 +521,10 @@ let construct_ir_tree ast symtab =
       let (block_idx, scope_stack, scope_map, symtab_stack, ir_stmts) = acc in
       match Symtab.SymtabM.find (string_of_int block_idx) (List.hd symtab_stack) with
       | Symtab.Value (_, _, Some new_symtab) ->
-         (map_stmts
-            blk
-            ((string_of_int block_idx) :: scope_stack)
-            scope_map
-            (new_symtab :: symtab_stack))
+         let+ stmts =
+           (map_stmts blk ((string_of_int block_idx) :: scope_stack)
+              scope_map (new_symtab :: symtab_stack)) in
+         List.rev stmts
       | _ -> Error "Error: Not a block"
     in
 
@@ -545,7 +543,7 @@ let construct_ir_tree ast symtab =
       | (scopes, _, Symtab.Value (_, type_, _)) ->
          let t = llvm_type_of_silktype type_ in
          let prefix = String.concat "." (List.rev scopes) in
-         let resolved_name = "%" ^ prefix ^ "." ^ name in
+         let resolved_name = "%\"" ^ prefix ^ "." ^ name ^ "\"" in
          let+ ir_exp = map_expr scope_map symtab_stack expr in
          (t, name, resolved_name, ir_exp)
     in
@@ -563,7 +561,7 @@ let construct_ir_tree ast symtab =
        (block_idx, scope_stack, scope_map,
         symtab_stack, (Expr ir_exp) :: ir_stmts)
     | Parsetree.Block blk ->
-       let+ stmts = map_blk (List.rev blk) acc in
+       let+ stmts = map_blk blk acc in
        (block_idx + 1, scope_stack, scope_map, symtab_stack,
         Block (blk_name block_idx scope_stack, stmts)
         :: ir_stmts)
@@ -571,10 +569,10 @@ let construct_ir_tree ast symtab =
        begin match (ifblock, elseblock) with
        | (Parsetree.Block ifstmts, Parsetree.Block elsestmts) ->
           let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
-          let* if_ir_stmts = map_blk (List.rev ifstmts) acc in
+          let* if_ir_stmts = map_blk ifstmts acc in
           let acc = (block_idx + 1, scope_stack,
                      scope_map, symtab_stack, ir_stmts) in
-          let+ else_ir_stmts = map_blk (List.rev elsestmts) acc in
+          let+ else_ir_stmts = map_blk elsestmts acc in
           let new_stmt = IfElse (blk_name block_idx scope_stack,
                                  blk_name (block_idx + 1) scope_stack,
                                  cond_ir_exp, if_ir_stmts,
@@ -587,7 +585,7 @@ let construct_ir_tree ast symtab =
        begin match whileblock with
        | Parsetree.Block whilestmts ->
           let* cond_ir_exp = map_expr scope_map symtab_stack cond_expr in
-          let+ while_ir_stmts = map_blk (List.rev whilestmts) acc in
+          let+ while_ir_stmts = map_blk whilestmts acc in
           let new_stmt = While (blk_name block_idx scope_stack,
                                 cond_ir_exp, while_ir_stmts) in
           (block_idx + 1, scope_stack, scope_map,
@@ -615,7 +613,7 @@ let construct_ir_tree ast symtab =
                      symtab_stack, ir_stmts) in
           let* cond_ir_exp = map_expr scope_map new_symtab_stack cond_expr in
           let* inc_ir_exp = map_expr scope_map new_symtab_stack inc_expr in
-          let+ for_ir_stmts = map_blk (List.rev forstmts) acc in
+          let+ for_ir_stmts = map_blk forstmts acc in
           let new_stmt = For (blk_name block_idx scope_stack,
                               (t, resolved_name, exp),
                               cond_ir_exp, inc_ir_exp,
@@ -695,7 +693,7 @@ let construct_ir_tree ast symtab =
                                  (List.combine args_ argtypes) in
           let decl_of_arg = fun (n, t) ->
             let lt = llvm_type_of_silktype t in
-            Decl (lt, "%" ^ name ^ "." ^ n, ParamIdentifier (lt, "%" ^ n)) in
+            Decl (lt, "%\"" ^ name ^ "." ^ n ^ "\"", ParamIdentifier (lt, "%" ^ n)) in
           let arg_decl_stmts = List.map decl_of_arg silktyped_args in
           let args = List.map
                        (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
@@ -707,7 +705,7 @@ let construct_ir_tree ast symtab =
              let scope_map =
                List.fold_left
                  (fun sm (n, _) ->
-                   ScopeM.add n ("%" ^ name ^ "." ^ n) sm)
+                   ScopeM.add n ("%\"" ^ name ^ "." ^ n ^ "\"") sm)
                  scope_map_ silktyped_args in
              let+ ir_stmts =
                map_stmts stmts [name] scope_map [Option.get inner_st]
@@ -734,7 +732,7 @@ let construct_ir_tree ast symtab =
           let args = List.map
                        (fun (n, t) -> (llvm_type_of_silktype t, "%" ^ n))
                        silktyped_args in
-          let resolved_name = "@" ^ name in
+          let resolved_name = "@" ^ "\"" ^ name ^ "\"" in
           let scope_map = ScopeM.add name resolved_name scope_map in
           let rt = llvm_type_of_silktype rettype in
           Ok (scope_map,
@@ -1234,10 +1232,10 @@ let serialize_irt irt_roots =
                                                      (serialize_value v1) ^ ",";
                                                      serialize_type t2;
                                                      serialize_value v2]
-      | Label s -> s ^ ":"
-      | Branch l -> "br label %" ^ l
-      | BranchCond (v, ifl, elsel) -> "br i1 " ^ (serialize_value v) ^ ", label %"
-                                      ^ ifl ^ ", label %" ^ elsel
+      | Label s -> "\"" ^ s ^ "\":"
+      | Branch l -> "br label %" ^ "\"" ^ l ^ "\""
+      | BranchCond (v, ifl, elsel) -> "br i1 " ^ (serialize_value v) ^ ", label %\""
+                                      ^ ifl ^ "\", label %\"" ^ elsel ^ "\""
       | Ret (t, v) -> String.concat " " ["ret"; serialize_type t; serialize_value v]
       | Call (t, v, args) ->
          let args_s = String.concat ", "

@@ -67,15 +67,18 @@ _template_list: TEMPLATE          { [$1] }
   | _template_list COMMA TEMPLATE { $3 :: $1 }
 ;
 
-top_decl: type_def        { TypeDef $1 }
-  | template_type_def     { TemplateTypeDef $1 }
-  | type_fwd_def          { TypeFwdDef $1 }
-  | template_type_fwd_def { TemplateTypeFwdDef $1 }
-  | val_decl              { ValDecl (true, $1) }
-  | PRIVATE val_decl      { ValDecl (false, $2) }
-  | func_decl             { FuncDecl (true, $1) }
-  | PRIVATE func_decl     { FuncDecl (false, $2) }
-  | func_fwd_decl         { FuncFwdDecl $1 }
+top_decl: type_def             { TypeDef $1 }
+  | template_type_def          { TemplateTypeDef $1 }
+  | type_fwd_def               { TypeFwdDef $1 }
+  | template_type_fwd_def      { TemplateTypeFwdDef $1 }
+  | val_decl                   { ValDecl (true, $1) }
+  | PRIVATE val_decl           { ValDecl (false, $2) }
+  | func_decl                  { FuncDecl (true, $1) }
+  | template_func_decl         { TemplateFuncDecl (true, $1) }
+  | PRIVATE func_decl          { FuncDecl (false, $2) }
+  | PRIVATE template_func_decl { TemplateFuncDecl (false, $2) }
+  | func_fwd_decl              { FuncFwdDecl $1 }
+  | template_func_fwd_decl     { TemplateFuncFwdDecl $1 }
 ;
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
@@ -97,26 +100,36 @@ val_decl: VAL IDENTIFIER EQ expr SEMICOLON { ValI ($2, $4) }
   | VAR IDENTIFIER type_ EQ expr SEMICOLON { Var ($2, $3, $5) }
 ;
 
-func_fwd_decl: FUNC IDENTIFIER
-LPAREN argument_list RPAREN type_
-SEMICOLON                                { ($2, $4, $6, false) }
-  | FUNC IDENTIFIER
-LPAREN RPAREN type_
-SEMICOLON                                { ($2, [], $5, false) }
-  | EXTERN FUNC IDENTIFIER
-LPAREN argument_list RPAREN type_
-SEMICOLON                                { ($3, $5, $7, true) }
-  | EXTERN FUNC IDENTIFIER
-LPAREN RPAREN type_
-SEMICOLON                                { ($3, [], $6, true) }
+func_fwd_decl: FUNC IDENTIFIER LPAREN argument_list RPAREN type_
+SEMICOLON { ($2, $4, $6, false) }
+  | FUNC IDENTIFIER LPAREN RPAREN type_
+SEMICOLON { ($2, [], $5, false) }
+  | EXTERN FUNC IDENTIFIER LPAREN argument_list RPAREN type_
+SEMICOLON { ($3, $5, $7, true) }
+  | EXTERN FUNC IDENTIFIER LPAREN RPAREN type_
+SEMICOLON { ($3, [], $6, true) }
+;
+template_func_fwd_decl: FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN argument_list RPAREN type_ SEMICOLON { ($4, ($2, $7, $9, false)) }
+  | FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN RPAREN type_ SEMICOLON               { ($4, ($2, [], $8, false)) }
+  | EXTERN FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN argument_list RPAREN type_ SEMICOLON { ($5, ($3, $8, $10, true)) }
+  | EXTERN FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN RPAREN type_ SEMICOLON { ($5, ($3, [], $9, true)) }
 ;
 
-func_decl: FUNC IDENTIFIER
-LPAREN argument_list RPAREN type_
-compound_statement                       { ($2, $4, $6, $7) }
-  | FUNC IDENTIFIER
-LPAREN RPAREN type_
-compound_statement                       { ($2, [], $5, $6) }
+func_decl: FUNC IDENTIFIER LPAREN argument_list RPAREN type_ compound_statement
+    { ($2, $4, $6, $7) }
+  | FUNC IDENTIFIER LPAREN RPAREN type_ compound_statement
+    { ($2, [], $5, $6) }
+;
+template_func_decl: FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN argument_list RPAREN type_ compound_statement
+    { ($4, ($2, $7, $9, $10)) }
+  | FUNC IDENTIFIER LESSTHAN template_list GREATERTHAN
+LPAREN RPAREN type_ compound_statement
+    { ($4, ($2, [], $8, $9)) }
 ;
 
 argument_list: _argument_list                   { List.rev $1 }

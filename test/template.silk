@@ -1,6 +1,33 @@
 
-type list<$t> = struct(value $t);
+type list<$t>;
+type list<$t> = struct(value $t, next mut*list<$t>);
 
 func f() list<i32> {
-  return list<i32>(1);
+  return list<i32>(1, (mut*list<i32>)(0));
+}
+
+type l64 = list<i64>;
+
+func g() l64 {
+  return l64(1l, (mut*l64)(0));
+}
+
+func add<$h>(o $h, p $h) $h;
+
+func add<$G>(a $G, b $G) $G {
+  if u64(a) == 0ul {
+    val c = b;
+    {
+      return c;
+    }
+  }
+  return a + b;
+}
+
+func main() i32 {
+  add<i32>(1, 2);
+  add<u64>(1ul, 2ul);
+  val x = add<i8>('a', 'b');
+
+  return i32(x);
 }

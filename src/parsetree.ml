@@ -66,5 +66,5 @@ type top_decl = TypeDef of type_def
 
               | TemplateTypeDef of (string list * type_def)
               | TemplateTypeFwdDef of (string list * string)
-              | TemplateFuncDecl of bool * string list * func_decl
-              | TemplateFuncFwdDecl of string list * func_fwd_decl
+              | TemplateFuncDecl of bool * (string list * func_decl)
+              | TemplateFuncFwdDecl of (string list * func_fwd_decl)
