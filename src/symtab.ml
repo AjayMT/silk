@@ -97,9 +97,9 @@ let rec check_valid_cast symtab_stack cast_t expr_t =
   let compare_types = compare_types symtab_stack in
   let err = Error "Error: Invalid type cast" in
   match cast_t with
-  | I _ | U _ ->
+  | I _ | U _ | Bool ->
      begin match expr_t with
-     | I _ | U _ | F _ | MutPointer _ -> Ok ()
+     | I _ | U _ | F _ | MutPointer _ | Bool -> Ok ()
      | _ -> err
      end
   | F f ->
@@ -189,8 +189,7 @@ let rec silktype_of_asttype symtab_stack t = match t with
      end
   | Parsetree.TypeOf exp -> eval_expr_type symtab_stack exp
   | Parsetree.AliasTemplateInstance _ ->
-     let name = Template.serialize_type t in
-     silktype_of_asttype symtab_stack (Parsetree.TypeAlias name)
+     Error ("Error: Failed to instantiate template " ^ (Template.serialize_type t))
   | Parsetree.Template n -> Error ("Error: Failed to replace template " ^ n)
 
 and eval_expr_type symtab_stack expr =
@@ -220,8 +219,8 @@ and eval_expr_type symtab_stack expr =
 
   match expr with
   | Parsetree.TemplateInstance (name, types) ->
-     let name = Template.serialize_instance name types in
-     eval_expr_type symtab_stack @@ Parsetree.Identifier name
+     Error ("Error: Failed to instantiate template " ^
+              (Template.serialize_instance name types))
   | Parsetree.Identifier name ->
      begin match find_symtab_stack name symtab_stack with
      | Some (Type _) -> Error ("Error: Expected value, found type: " ^ name)
@@ -302,9 +301,6 @@ and eval_expr_type symtab_stack expr =
      | Ok t -> check_function_type t
      | Error e ->
         let rec process_fexp f =  match f with
-          | Parsetree.TemplateInstance (name, types) ->
-             let name = Template.serialize_instance name types in
-             process_fexp @@ Parsetree.Identifier name
           | Parsetree.Identifier t ->
              let* silktype =
                silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)

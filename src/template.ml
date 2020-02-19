@@ -48,6 +48,10 @@ let rec serialize_type t = match t with
 let serialize_instance name types =
   serialize_type @@ AliasTemplateInstance (name, types)
 
+let add_object f (decls, os) o =
+  let+ (decls, o) = f decls o in
+  decls, o :: os
+
 let rec map_stmt tmap s =
   let map_vd tmap vd = match vd with
     | ValI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
@@ -156,47 +160,48 @@ and map_type tmap t =
   | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64
     | Void | Bool | TypeAlias _ -> Ok t
 
-let create_decl name types decls =
+let rec create_decl name types decls =
   let alias_name = serialize_instance name types in
-  let add_template tmap (name, type_) = TemplateM.add name type_ tmap
-  in
   let tmap templates =
+    let add_template tmap (name, type_) = TemplateM.add name type_ tmap
+    in
     List.fold_left add_template TemplateM.empty @@
       List.combine templates types
   in
-  match Util.assoc alias_name decls with
+  match List.assoc_opt alias_name decls with
   | Some _ -> Ok decls
   | None ->
-     (* TODO re-traverse new top decl *)
-     let rec create l = match Util.assoc name l with
-       | Some (TemplateTypeDef (templates, (_, type_)), l) ->
-          let* t = map_type (tmap templates) type_ in
-          let+ decls = create l in
-          (alias_name, TypeDef (alias_name, t)) :: decls
-       | Some (TemplateTypeFwdDef (_, name), l) ->
-          Ok ((alias_name, TypeFwdDef alias_name) :: decls)
-       | Some ((TemplateFuncDecl (pub, (templates, (_, args, rt, body)))), l) ->
-          let* body = map_stmt (tmap templates) body in
-          let* rt = map_type (tmap templates) rt in
-          let (argnames, argtypes) = List.split args in
-          let* argtypes = Util.map_join (map_type (tmap templates)) argtypes in
-          let args = List.combine argnames argtypes in
-          let+ decls = create l in
-          (alias_name, FuncDecl (pub, (alias_name, args, rt, body))) :: decls
-       | Some ((TemplateFuncFwdDecl (templates, (name, args, rt, ext))), l) ->
-          let* rt = map_type (tmap templates) rt in
-          let (argnames, argtypes) = List.split args in
-          let+ argtypes = Util.map_join (map_type (tmap templates)) argtypes in
-          let args = List.combine argnames argtypes in
-          (alias_name, FuncFwdDecl (alias_name, args, rt, ext)) :: decls
-       | _ -> Ok decls
-     in create decls
+     match Util.assoc2 name decls with
+     | (Some (TemplateTypeDef (templates, (_, type_))),
+        b) ->
+        let decls = match b with
+          | Some (TemplateTypeFwdDef (_, name)) ->
+             (alias_name, TypeFwdDef alias_name) :: decls
+          | _ -> decls
+        in
+        let* t = map_type (tmap templates) type_ in
+        let decl = TypeDef (alias_name, t) in
+        trav_top_decl decls decl
+     | (Some (TemplateFuncDecl (pub, (templates, (_, args, rt, body)))), b) ->
+        let* decls = match b with
+          | Some (TemplateFuncFwdDecl (templates, (name, args, rt, ext))) ->
+             let* rt = map_type (tmap templates) rt in
+             let (argnames, argtypes) = List.split args in
+             let+ argtypes = Util.map_join (map_type (tmap templates)) argtypes in
+             let args = List.combine argnames argtypes in
+             (alias_name, FuncFwdDecl (alias_name, args, rt, ext)) :: decls
+          | _ -> Ok decls
+        in
+        let* body = map_stmt (tmap templates) body in
+        let* rt = map_type (tmap templates) rt in
+        let (argnames, argtypes) = List.split args in
+        let* argtypes = Util.map_join (map_type (tmap templates)) argtypes in
+        let args = List.combine argnames argtypes in
+        let decl = FuncDecl (pub, (alias_name, args, rt, body)) in
+        trav_top_decl decls decl
+     | _ -> Error ("Error: Failed to create " ^ alias_name)
 
-let add_object f (decls, os) o =
-  let+ (decls, o) = f decls o in
-  decls, o :: os
-
-let rec trav_type decls t = match t with
+and trav_type decls t = match t with
   | I8 | I16 | I32 | I64
     | U8 | U16 | U32 | U64
     | F32 | F64 | Void | Bool | TypeAlias _ | Template _ -> Ok (decls, t)
@@ -227,7 +232,7 @@ let rec trav_type decls t = match t with
 
   | AliasTemplateInstance (name, types) ->
      let+ decls = create_decl name types decls in
-     decls, t
+     decls, TypeAlias (serialize_instance name types)
 
 and trav_expr decls e = match e with
   | Identifier _ | Literal _ -> Ok (decls, e)
@@ -276,9 +281,9 @@ and trav_expr decls e = match e with
 
   | TemplateInstance (name, types) ->
      let+ decls = create_decl name types decls in
-     decls, e
+     decls, Identifier (serialize_instance name types)
 
-let trav_vd decls vd =
+and trav_vd decls vd =
   let (name, expr) = match vd with
     | Val (name, _, expr) -> (name, expr)
     | ValI (name, expr) -> (name, expr)
@@ -293,8 +298,7 @@ let trav_vd decls vd =
   | Var (name, t, _) -> Var (name, t, expr)
   | VarI (name, _) -> VarI (name, expr)
 
-
-let rec trav_stmt decls s = match s with
+and trav_stmt decls s = match s with
   | Empty | Continue | Break | Return None -> Ok (decls, s)
   | Decl vd ->
      let+ (decls, vd) = trav_vd decls vd in
@@ -324,7 +328,7 @@ let rec trav_stmt decls s = match s with
      let+ (decls, e) = trav_expr decls e in
      decls, Return (Some e)
 
-let trav_top_decl decls decl = match decl with
+and trav_top_decl decls decl = match decl with
   | TypeDef (name, t) ->
      let+ (decls, t) = trav_type decls t in
      (name, TypeDef (name, t)) :: decls

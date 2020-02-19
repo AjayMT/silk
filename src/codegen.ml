@@ -251,8 +251,8 @@ let construct_ir_tree ast symtab =
        | None -> Error ("Error: Identifier " ^ name ^ " undefined")
        end
     | Parsetree.TemplateInstance (name, types) ->
-       let name = Template.serialize_instance name types in
-       map_expr scope_map symtab_stack @@ Parsetree.Identifier name
+       Error ("Error: Failed to instantiate template " ^
+                (Template.serialize_instance name types))
     | Parsetree.Literal l ->
        begin match l with
        | Parsetree.LI8  i -> Ok (Literal (I 8, Int i))
@@ -295,7 +295,7 @@ let construct_ir_tree ast symtab =
                           [(I 32, Literal (I 32, Int 0)); (idx_type, idx)])
             in
             Write (get_ir_expr_type rexp, ptr_exp, rexp)
-         | Parsetree.StructIndexAccess (struct_expr, idx) ->
+         | Parsetree.StructIndexAccess _ | Parsetree.StructMemberAccess _ ->
             let+ lval = map_expr scope_map symtab_stack lval in
             Write (get_ir_expr_type rexp,
                    UnOp (get_ir_expr_type lval, AddressOf, lval),
@@ -377,9 +377,6 @@ let construct_ir_tree ast symtab =
        | Ok e -> map_ir_fexp e
        | Error e ->
           let rec process_fexp f = match f with
-            | Parsetree.TemplateInstance (name, types) ->
-               let name = Template.serialize_instance name types in
-               process_fexp @@ Parsetree.Identifier name
             | Parsetree.Identifier t ->
                let* silkt =
                  Symtab.silktype_of_asttype types_tab_stack (Parsetree.TypeAlias t)

@@ -2,14 +2,8 @@
 type list<$t>;
 type list<$t> = struct(value $t, next mut*list<$t>);
 
-func f() list<i32> {
-  return list<i32>(1, (mut*list<i32>)(0));
-}
-
-type l64 = list<i64>;
-
-func g() l64 {
-  return l64(1l, (mut*l64)(0));
+func makelist<$t>(value $t) list<$t> {
+  return list<$t>(value, (mut*list<$t>)(0));
 }
 
 func add<$h>(o $h, p $h) $h;
@@ -25,9 +19,13 @@ func add<$G>(a $G, b $G) $G {
 }
 
 func main() i32 {
-  add<i32>(1, 2);
+  val a = add<i32>(1, 2);
   add<u64>(1ul, 2ul);
   val x = add<i8>('a', 'b');
+
+  var g = makelist<i32>(a);
+  var h = makelist<i32>(2);
+  g.next = &h;
 
   return i32(x);
 }

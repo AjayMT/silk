@@ -20,8 +20,13 @@ let map_join f l =
   let+ l = flb ff [] l in
   List.rev l
 
-let rec assoc key l = match l with
-  | [] -> None
-  | (x, y) :: xys ->
-     if x = key then Some (y, xys)
-     else assoc key xys
+let assoc2 key l =
+  let f found pair =
+    let (k, v) = pair in
+    let v = if k = key then Some v else None in
+    match found with
+    | (Some a, Some b) -> found
+    | (Some a, None) -> (Some a, v)
+    | (None, _) -> (v, None)
+  in
+  List.fold_left f (None, None) l
