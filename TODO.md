@@ -1,0 +1,2 @@
+- bool casting
+- remove typeof
