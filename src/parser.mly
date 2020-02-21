@@ -31,7 +31,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA DOT COLON SEMICOLON
 %token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED
-%token TYPE TYPEOF VAL VAR FUNC EXTERN PRIVATE
+%token TYPE VAL VAR FUNC EXTERN PRIVATE
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
 
@@ -175,7 +175,6 @@ type_: base_type { $1 }
   | IDENTIFIER LESSTHAN type_list GREATERTHAN { AliasTemplateInstance ($1, $3) }
   | FUNC LPAREN type_list RPAREN type_  { Function ($3, $5) }
   | FUNC LPAREN RPAREN type_            { Function ([], $4) }
-  | TYPEOF LPAREN expr RPAREN           { TypeOf $3 }
   | LPAREN type_ RPAREN { $2 }
 ;
 
@@ -216,8 +215,7 @@ _type_list: type_          { [$1] }
 cast_type: base_type        { $1 }
   | pointer_type            { $1 }
   | TEMPLATE                { Template $1 }
-  | TYPEOF LPAREN expr RPAREN { TypeOf $3 }
-  | LPAREN cast_type RPAREN   { $2 }
+  | LPAREN cast_type RPAREN { $2 }
 ;
 
 deref_expr: IDENTIFIER { Identifier $1 }

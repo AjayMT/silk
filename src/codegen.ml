@@ -183,7 +183,11 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | Assignment (t, _, _) -> t
   | Write (t, _, _) -> t
   | FunctionCall (t, _, _, _) -> t
-  | BinOp (t, _, _, _) -> t
+  | BinOp (t, o, _, _) ->
+     begin match o with
+     | Equal | GreaterThan | LessThan | And | Or -> I 1
+     | _ -> t
+     end
   | ItoF (_, _, t) -> t
   | FtoI (_, _, t) -> t
   | BitCast (_, _, t) -> t
@@ -338,6 +342,13 @@ let construct_ir_tree ast symtab =
             | Alias (t, _) -> resolve_cast casttype t
             | _ -> ir_expr
             end
+         | I 1 ->
+            let zerol = match ir_expr_type with
+              | F _ -> Float 0.0
+              | _ -> Int 0
+            in
+            UnOp (I 1, Not,
+                  BinOp (ir_expr_type, Equal, ir_expr, Literal (ir_expr_type, zerol)))
          | I i | U i ->
             begin match ir_expr_type with
             | F _ -> FtoI (ir_expr_type, ir_expr, casttype)

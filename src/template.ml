@@ -43,7 +43,6 @@ let rec serialize_type t = match t with
      prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
   | AliasTemplateInstance (name, ts) ->
      name ^ "<" ^ (String.concat "," @@ List.map serialize_type ts) ^ ">"
-  | TypeOf expr -> "" (* TODO this is a big yikes *)
 
 let serialize_instance name types =
   serialize_type @@ AliasTemplateInstance (name, types)
@@ -52,46 +51,35 @@ let add_object f (decls, os) o =
   let+ (decls, o) = f decls o in
   decls, o :: os
 
-let rec map_stmt tmap s =
-  let map_vd tmap vd = match vd with
-    | ValI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
-    | VarI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
-    | Val (n, t, e) ->
-       let* t = map_type tmap t in
-       let+ e = map_expr tmap e in
-       Val (n, t, e)
-    | Var (n, t, e) ->
-       let* t = map_type tmap t in
-       let+ e = map_expr tmap e in
-       Var (n, t, e)
-  in
-  match s with
-  | Empty | Continue | Break | Return None -> Ok s
-  | Decl vd -> let+ vd = map_vd tmap vd in Decl vd
-  | Expr e -> let+ e = map_expr tmap e in Expr e
-  | Block ss ->
-     let+ ss = Util.map_join (map_stmt tmap) ss in
-     Block ss
-  | IfElse (e, s1, s2) ->
-     let* e = map_expr tmap e in
-     let* s1 = map_stmt tmap s1 in
-     let+ s2 = map_stmt tmap s2 in
-     IfElse (e, s1, s2)
-  | While (e, s) ->
-     let* e = map_expr tmap e in
-     let+ s = map_stmt tmap s in
-     While (e, s)
-  | For (vd, e1, e2, s) ->
-     let* vd = map_vd tmap vd in
-     let* e1 = map_expr tmap e1 in
-     let* e2 = map_expr tmap e2 in
-     let+ s = map_stmt tmap s in
-     For (vd, e1, e2, s)
-  | Return (Some e) ->
-     let+ e = map_expr tmap e in
-     Return (Some e)
+let rec map_type tmap t =
+  match t with
+  | Template name ->
+     begin match TemplateM.find_opt name tmap with
+     | Some t -> Ok t
+     | None -> Error ("Error: Undefined template " ^ name)
+     end
+  | Function (ts, rt) ->
+     let* rt = map_type tmap rt in
+     let+ args = Util.map_join (map_type tmap) ts in
+     Function (args, rt)
+  | Pointer t -> let+ t = map_type tmap t in Pointer t
+  | MutPointer t -> let+ t = map_type tmap t in MutPointer t
+  | Array (i, t) -> let+ t = map_type tmap t in Array (i, t)
+  | StructLabeled (packed, pairs) ->
+     let (names, types) = List.split pairs in
+     let+ mts = Util.map_join (map_type tmap) types in
+     let pairs = List.combine names mts in
+     StructLabeled (packed, pairs)
+  | Struct (packed, ts) ->
+     let+ mts = Util.map_join (map_type tmap) ts in
+     Struct (packed, mts)
+  | AliasTemplateInstance (name, ts) ->
+     let+ ts = Util.map_join (map_type tmap) ts in
+     AliasTemplateInstance (name, ts)
+  | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64
+    | Void | Bool | TypeAlias _ -> Ok t
 
-and map_expr tmap e = match e with
+let rec map_expr tmap e = match e with
   | Identifier _ | Literal _ -> Ok e
   | Assignment (l, r) ->
      let* l = map_expr tmap l in
@@ -131,34 +119,44 @@ and map_expr tmap e = match e with
   | StructIndexAccess (e, i) ->
      let+ e = map_expr tmap e in StructIndexAccess (e, i)
 
-and map_type tmap t =
-  match t with
-  | Template name ->
-     begin match TemplateM.find_opt name tmap with
-     | Some t -> Ok t
-     | None -> Error ("Error: Undefined template " ^ name)
-     end
-  | Function (ts, rt) ->
-     let* rt = map_type tmap rt in
-     let+ args = Util.map_join (map_type tmap) ts in
-     Function (args, rt)
-  | Pointer t -> let+ t = map_type tmap t in Pointer t
-  | MutPointer t -> let+ t = map_type tmap t in MutPointer t
-  | Array (i, t) -> let+ t = map_type tmap t in Array (i, t)
-  | StructLabeled (packed, pairs) ->
-     let (names, types) = List.split pairs in
-     let+ mts = Util.map_join (map_type tmap) types in
-     let pairs = List.combine names mts in
-     StructLabeled (packed, pairs)
-  | Struct (packed, ts) ->
-     let+ mts = Util.map_join (map_type tmap) ts in
-     Struct (packed, mts)
-  | AliasTemplateInstance (name, ts) ->
-     let+ ts = Util.map_join (map_type tmap) ts in
-     AliasTemplateInstance (name, ts)
-  | TypeOf e -> let+ e = map_expr tmap e in TypeOf e
-  | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64
-    | Void | Bool | TypeAlias _ -> Ok t
+let rec map_stmt tmap s =
+  let map_vd tmap vd = match vd with
+    | ValI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
+    | VarI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
+    | Val (n, t, e) ->
+       let* t = map_type tmap t in
+       let+ e = map_expr tmap e in
+       Val (n, t, e)
+    | Var (n, t, e) ->
+       let* t = map_type tmap t in
+       let+ e = map_expr tmap e in
+       Var (n, t, e)
+  in
+  match s with
+  | Empty | Continue | Break | Return None -> Ok s
+  | Decl vd -> let+ vd = map_vd tmap vd in Decl vd
+  | Expr e -> let+ e = map_expr tmap e in Expr e
+  | Block ss ->
+     let+ ss = Util.map_join (map_stmt tmap) ss in
+     Block ss
+  | IfElse (e, s1, s2) ->
+     let* e = map_expr tmap e in
+     let* s1 = map_stmt tmap s1 in
+     let+ s2 = map_stmt tmap s2 in
+     IfElse (e, s1, s2)
+  | While (e, s) ->
+     let* e = map_expr tmap e in
+     let+ s = map_stmt tmap s in
+     While (e, s)
+  | For (vd, e1, e2, s) ->
+     let* vd = map_vd tmap vd in
+     let* e1 = map_expr tmap e1 in
+     let* e2 = map_expr tmap e2 in
+     let+ s = map_stmt tmap s in
+     For (vd, e1, e2, s)
+  | Return (Some e) ->
+     let+ e = map_expr tmap e in
+     Return (Some e)
 
 let rec create_decl name types decls =
   let alias_name = serialize_instance name types in
@@ -226,9 +224,6 @@ and trav_type decls t = match t with
   | Struct (packed, ts) ->
      let+ (decls, ts) = Util.flb (add_object trav_type) (decls, []) ts in
      decls, Struct (packed, List.rev ts)
-  | TypeOf e ->
-     let+ (decls, e) = trav_expr decls e in
-     decls, TypeOf e
 
   | AliasTemplateInstance (name, types) ->
      let+ decls = create_decl name types decls in

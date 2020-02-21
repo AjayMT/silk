@@ -1,12 +1,12 @@
 
 type a = struct(i32, i32, i32);
 
-func f(): a {
+func f() a {
   var ar = [a; 1];
   return a(1, 2, 3);
 }
 
-func g(): void {
+func g() void {
   var c = a(1,2,3);
-  var b: typeof(c) = c;
+  var b a = c;
 }

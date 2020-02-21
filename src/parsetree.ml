@@ -15,6 +15,18 @@ type bin_op = Plus | Minus | Times | Divide | Modulus
               | RShift | LShift | BitAnd | BitOr | BitXor
 type un_op = UMinus | Not | BitNot | AddressOf | Deref
 
+type type_ = I8 | I16 | I32 | I64
+             | U8 | U16 | U32 | U64
+             | F32 | F64
+             | Function of type_ list * type_
+             | Pointer of type_ | MutPointer of type_
+             | Array of int * type_
+             | StructLabeled of bool * (string * type_) list
+             | Struct of bool * type_ list
+             | Void | Bool | TypeAlias of string
+             | AliasTemplateInstance of string * type_ list
+             | Template of string
+
 type expr = Identifier of string | Literal of literal | Assignment of expr * expr
             | TemplateInstance of string * type_ list
             | StructLiteral of bool * expr list
@@ -28,18 +40,6 @@ type expr = Identifier of string | Literal of literal | Assignment of expr * exp
             | Index of expr * expr
             | StructMemberAccess of expr * string
             | StructIndexAccess of expr * int
-and type_ = I8 | I16 | I32 | I64
-            | U8 | U16 | U32 | U64
-            | F32 | F64
-            | Function of type_ list * type_
-            | Pointer of type_ | MutPointer of type_
-            | Array of int * type_
-            | StructLabeled of bool * (string * type_) list
-            | Struct of bool * type_ list
-            | Void | Bool | TypeAlias of string
-            | AliasTemplateInstance of string * type_ list
-            | Template of string
-            | TypeOf of expr
 
 type val_decl = ValI of string * expr | Val of string * type_ * expr
                 | VarI of string * expr | Var of string * type_ * expr

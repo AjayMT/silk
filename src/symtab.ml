@@ -187,12 +187,11 @@ let rec silktype_of_asttype symtab_stack t = match t with
         Error ("Error: " ^ name ^ " is not a type")
      | None -> Error ("Error: type " ^ name ^ " undefined")
      end
-  | Parsetree.TypeOf exp -> eval_expr_type symtab_stack exp
   | Parsetree.AliasTemplateInstance _ ->
      Error ("Error: Failed to instantiate template " ^ (Template.serialize_type t))
   | Parsetree.Template n -> Error ("Error: Failed to replace template " ^ n)
 
-and eval_expr_type symtab_stack expr =
+let rec eval_expr_type symtab_stack expr =
   let compare_types = compare_types symtab_stack in
   let check_valid_cast = check_valid_cast symtab_stack in
 
