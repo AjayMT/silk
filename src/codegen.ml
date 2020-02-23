@@ -185,7 +185,7 @@ let get_ir_expr_type ir_exp = match ir_exp with
   | FunctionCall (t, _, _, _) -> t
   | BinOp (t, o, _, _) ->
      begin match o with
-     | Equal | GreaterThan | LessThan | And | Or -> I 1
+     | Equal | GreaterThan | LessThan -> I 1
      | _ -> t
      end
   | ItoF (_, _, t) -> t
@@ -376,11 +376,9 @@ let construct_ir_tree ast symtab =
     | Parsetree.FunctionCall (fexp, argexps) ->
        let map_ir_fexp ir_fexp = match (get_ir_expr_type ir_fexp) with
          | Function (argtypes, rettype) ->
-            let add_arg args ar_exp =
-              let+ ir_argexp = map_expr scope_map symtab_stack ar_exp in
-              ir_argexp :: args
+            let+ args =
+              Util.map_join (map_expr scope_map symtab_stack) argexps
             in
-            let+ args = Util.flb add_arg [] argexps in
             FunctionCall (rettype, ir_fexp, argtypes, args)
          | _ -> Error "Error: Not a function"
        in

@@ -7,7 +7,7 @@ let char_of_string s = (Scanf.unescaped s).[0]
 }
 
 let decimalDigit = ['0'-'9']
-let hexadecimalDigit = ['0'-'9' 'a'-'f']
+let hexadecimalDigit = ['0'-'9' 'a'-'f' 'A'-'F']
 let octalDigit = ['0'-'7']
 let leadingChar = ['a'-'z' 'A'-'Z']
 let nonleadingChar = ['a'-'z' 'A'-'Z' '_' '0'-'9']
