@@ -488,6 +488,7 @@ let construct_ir_tree ast symtab =
        in
        let+ t = match (resolve_alias expr_type) with
          | StructLabeled (_, l) -> Ok l
+         | OpaqueType _ -> Error "1unimplemented"
          | _ -> Error "Error: Cannot access member of non-labeledstruct type"
        in
        StructAccess (expr_type, expr, find_member t name 0)

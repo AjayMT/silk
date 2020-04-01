@@ -33,9 +33,14 @@ let rec find_symtab_stack name ststack = match ststack with
      | Some v -> Some v
      | None -> find_symtab_stack name zs
 
-let rec resolve_type_alias t = match t with
-  | TypeAlias (_, t) -> resolve_type_alias t
-  | _ -> t
+let rec resolve_type_alias symtab_stack t = match t with
+  | TypeAlias (_, t) -> resolve_type_alias symtab_stack t
+  | TypeStub name ->
+     begin match find_symtab_stack name symtab_stack with
+     | Some (Type t) -> Ok t
+     | _ -> Error ("Error: Failed to resolve type " ^ name)
+     end
+  | _ -> Ok t
 
 let rec compare_types symtab_stack a b =
   let compare_types = compare_types symtab_stack in
@@ -59,16 +64,22 @@ let rec compare_types symtab_stack a b =
      end
   | (TypeAlias (an, _), TypeAlias (bn, _)) ->
      if an = bn then true
-     else compare_types (resolve_type_alias a) b
+     else
+       begin match (resolve_type_alias symtab_stack a) with
+       | Ok t -> compare_types t b
+       | _ -> false
+       end
   | (TypeAlias (_, a), b) ->
-     begin match (resolve_type_alias a) with
-     | Struct _ | StructLabeled _ -> false
-     | a -> compare_types a b
+     begin match (resolve_type_alias symtab_stack a) with
+     | Ok Struct _ | Ok StructLabeled _ -> false
+     | Ok a -> compare_types a b
+     | _ -> false
      end
   | (a, TypeAlias (_, b)) ->
-     begin match (resolve_type_alias b) with
-     | Struct _ | StructLabeled _ -> false
-     | b -> compare_types a (resolve_type_alias b)
+     begin match (resolve_type_alias symtab_stack b) with
+     | Ok Struct _ | Ok StructLabeled _ -> false
+     | Ok b -> compare_types a b
+     | _ -> false
      end
   | (Pointer a, Pointer b) -> compare_types a b
   | (MutPointer a, MutPointer b) -> compare_types a b
@@ -238,7 +249,8 @@ let rec eval_expr_type symtab_stack expr =
             let* acc = acc in
             let+ t = check_lval lv et in t
           in
-          let* valtypes = match (resolve_type_alias expected_type) with
+          let* resolved_type = resolve_type_alias symtab_stack expected_type in
+          let* valtypes = match resolved_type with
             | Struct (_, l) -> if List.length exprs <> List.length l then err
                                else Ok l
             | StructLabeled (_, l) ->
@@ -304,7 +316,8 @@ let rec eval_expr_type symtab_stack expr =
              let* silktype =
                silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
              in
-             begin match (resolve_type_alias silktype) with
+             let* resolved_type = resolve_type_alias symtab_stack silktype in
+             begin match resolved_type with
              | Struct (_, l) ->
                 if List.length args <> List.length l
                 then Error "Error: Incorrect number of members in struct initialization"
@@ -405,7 +418,8 @@ let rec eval_expr_type symtab_stack expr =
      Struct (packed, List.rev types)
   | Parsetree.StructInit (t, exprs) ->
      let* t = silktype_of_asttype symtab_stack t in
-     let* member_types = match (resolve_type_alias t) with
+     let* resolved_type = resolve_type_alias symtab_stack t in
+     let* member_types = match resolved_type with
        | Struct (_, ts) ->
           if List.length ts = List.length exprs
           then Ok ts
@@ -441,9 +455,11 @@ let rec eval_expr_type symtab_stack expr =
   | Parsetree.Index (array, idx) ->
      let* array_type = eval_expr_type symtab_stack array in
      let* idx_type = eval_expr_type symtab_stack idx in
-     begin match resolve_type_alias idx_type with
+     let* resolved_type = resolve_type_alias symtab_stack idx_type in
+     begin match resolved_type with
      | I _ | U _ ->
-        begin match resolve_type_alias array_type with
+        let* resolved_type = resolve_type_alias symtab_stack array_type in
+        begin match resolved_type with
         | Array (_, elem_type) -> Ok elem_type
         | _ -> Error "Error: Cannot index non-array type"
         end
@@ -451,7 +467,8 @@ let rec eval_expr_type symtab_stack expr =
      end
   | Parsetree.StructMemberAccess (exp, name) ->
      let* t = eval_expr_type symtab_stack exp in
-     let* members = match (resolve_type_alias t) with
+     let* resolved_type = resolve_type_alias symtab_stack t in
+     let* members = match resolved_type with
        | StructLabeled (_, l) -> Ok l
        | _ -> Error "Error: Cannot access member of non-labeledstruct type"
      in
@@ -461,7 +478,8 @@ let rec eval_expr_type symtab_stack expr =
      end
   | Parsetree.StructIndexAccess (exp, idx) ->
      let* t = eval_expr_type symtab_stack exp in
-     let* members = match (resolve_type_alias t) with
+     let* resolved_type = resolve_type_alias symtab_stack t in
+     let* members = match resolved_type with
        | Struct (_, l) -> Ok l
        | _ -> Error "Error: Cannot access member of non-unlabeledstruct type"
      in
