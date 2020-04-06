@@ -1,2 +1,2 @@
-- fix template vs '<' operator parsing
+- fix shift/reduce conflict
 - CLI
