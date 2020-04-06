@@ -1,5 +1,2 @@
-- resolve aliases correctly
-  - handle type stubs
-  - `get_ir_expr` and `resolve_alias` should produce a result value
 - fix template vs '<' operator parsing
 - CLI

@@ -37,7 +37,7 @@ let rec resolve_type_alias symtab_stack t = match t with
   | TypeAlias (_, t) -> resolve_type_alias symtab_stack t
   | TypeStub name ->
      begin match find_symtab_stack name symtab_stack with
-     | Some (Type t) -> Ok t
+     | Some (Type t) -> resolve_type_alias symtab_stack t
      | _ -> Error ("Error: Failed to resolve type " ^ name)
      end
   | _ -> Ok t
