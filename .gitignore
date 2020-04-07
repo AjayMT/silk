@@ -1,0 +1,6 @@
+/._*
+/silk
+/_build
+*.llvm
+*.s
+*.o
