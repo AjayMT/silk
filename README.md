@@ -14,3 +14,5 @@ think I wrote an end-to-end compiler, did you?) does all of the optimization.
 
 As is true of many of my projects, Silk is currently **alpha**-stage software.
 Don't expect it to work well (or at all).
+
+<https://github.com/AjayMT/silk>
