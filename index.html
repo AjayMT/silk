@@ -11,6 +11,71 @@
     span.underline{text-decoration: underline;}
     div.column{display: inline-block; vertical-align: top; width: 50%;}
     div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        background-color: #ffffff;
+        color: #a0a0a0;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #a0a0a0;  padding-left: 4px; }
+    div.sourceCode
+      { color: #1f1c1b; background-color: #ffffff; }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span. { color: #1f1c1b; } /* Normal */
+    code span.al { color: #bf0303; background-color: #f7e6e6; font-weight: bold; } /* Alert */
+    code span.an { color: #ca60ca; } /* Annotation */
+    code span.at { color: #0057ae; } /* Attribute */
+    code span.bn { color: #b08000; } /* BaseN */
+    code span.bu { color: #644a9b; font-weight: bold; } /* BuiltIn */
+    code span.cf { color: #1f1c1b; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #924c9d; } /* Char */
+    code span.cn { color: #aa5500; } /* Constant */
+    code span.co { color: #898887; } /* Comment */
+    code span.cv { color: #0095ff; } /* CommentVar */
+    code span.do { color: #607880; } /* Documentation */
+    code span.dt { color: #0057ae; } /* DataType */
+    code span.dv { color: #b08000; } /* DecVal */
+    code span.er { color: #bf0303; text-decoration: underline; } /* Error */
+    code span.ex { color: #0095ff; font-weight: bold; } /* Extension */
+    code span.fl { color: #b08000; } /* Float */
+    code span.fu { color: #644a9b; } /* Function */
+    code span.im { color: #ff5500; } /* Import */
+    code span.in { color: #b08000; } /* Information */
+    code span.kw { color: #1f1c1b; font-weight: bold; } /* Keyword */
+    code span.op { color: #1f1c1b; } /* Operator */
+    code span.ot { color: #006e28; } /* Other */
+    code span.pp { color: #006e28; } /* Preprocessor */
+    code span.re { color: #0057ae; background-color: #e0e9f8; } /* RegionMarker */
+    code span.sc { color: #3daee9; } /* SpecialChar */
+    code span.ss { color: #ff5500; } /* SpecialString */
+    code span.st { color: #bf0303; } /* String */
+    code span.va { color: #0057ae; } /* Variable */
+    code span.vs { color: #bf0303; } /* VerbatimString */
+    code span.wa { color: #bf0303; } /* Warning */
   </style>
   <link rel="stylesheet" href="style.css" />
   <!--[if lt IE 9]>
@@ -18,6 +83,25 @@
   <![endif]-->
 </head>
 <body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#silk">Silk</a>
+<ul>
+<li><a href="#syntax">Syntax</a></li>
+<li><a href="#semantics-and-features">Semantics and features</a>
+<ul>
+<li><a href="#mutability">Mutability</a></li>
+<li><a href="#aggregate-types">Aggregate types</a></li>
+<li><a href="#user-defined-types-and-parametric-polymorphism">User-defined types and parametric polymorphism</a></li>
+<li><a href="#other-miscellaneous-things">Other miscellaneous things</a></li>
+</ul></li>
+<li><a href="#build">Build</a></li>
+<li><a href="#usage">Usage</a></li>
+<li><a href="#todos-roadmap">TODOs / Roadmap</a></li>
+<li><a href="#license">License</a></li>
+</ul></li>
+</ul>
+</nav>
 <h1 id="silk">Silk</h1>
 <p>Silk is a small system programming language that I wrote for fun and clout. It is designed to be as flexible and simple as C, but more pleasant to write. To that end, Silk provides</p>
 <ul>
@@ -28,5 +112,277 @@
 <p>Silk does not aim to be as safe or fast as C++, Rust, etc. The LLVM backend (you didn’t think I wrote an end-to-end compiler, did you?) does all of the optimization.</p>
 <p>As is true of many of my projects, Silk is currently <strong>alpha</strong>-stage software. Don’t expect it to work well (or at all).</p>
 <p><a href="https://github.com/AjayMT/silk" class="uri">https://github.com/AjayMT/silk</a></p>
+<h2 id="syntax">Syntax</h2>
+<p>Silk is heavily inspired by <a href="https://golang.org/">Go</a> and other modern programming languages.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb1-1"><a href="#cb1-1"></a><span class="co">// this is a comment</span></span>
+<span id="cb1-2"><a href="#cb1-2"></a></span>
+<span id="cb1-3"><a href="#cb1-3"></a><span class="kw">extern</span> func printf(s *<span class="dt">i8</span>) void;</span>
+<span id="cb1-4"><a href="#cb1-4"></a></span>
+<span id="cb1-5"><a href="#cb1-5"></a>func main(argc <span class="dt">i32</span>, argv **<span class="dt">i8</span>) <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb1-6"><a href="#cb1-6"></a>  printf(<span class="st">&quot;hello, world</span><span class="sc">\n</span><span class="st">&quot;</span>);</span>
+<span id="cb1-7"><a href="#cb1-7"></a></span>
+<span id="cb1-8"><a href="#cb1-8"></a>  <span class="kw">if</span> argc &gt; <span class="dv">1</span> <span class="op">{</span></span>
+<span id="cb1-9"><a href="#cb1-9"></a>    val arg = @(argv + <span class="dv">1</span>);</span>
+<span id="cb1-10"><a href="#cb1-10"></a>    printf(arg);</span>
+<span id="cb1-11"><a href="#cb1-11"></a>  <span class="op">}</span></span>
+<span id="cb1-12"><a href="#cb1-12"></a></span>
+<span id="cb1-13"><a href="#cb1-13"></a>  <span class="kw">return</span> <span class="dv">0</span>;</span>
+<span id="cb1-14"><a href="#cb1-14"></a><span class="op">}</span></span></code></pre></div>
+<p>Notably,</p>
+<ul>
+<li>types come after names</li>
+<li><code>@</code> is the pointer dereference operator</li>
+<li><code>val</code> and <code>var</code> are used to declare values and variables (whose types are inferred unless specified explicitly)</li>
+<li><code>func</code>, <code>return</code>, <code>if</code>, <code>for</code> and <code>while</code> are familiar keywords</li>
+<li><code>extern</code> declares a symbol defined in a different object file.</li>
+</ul>
+<p>Silk also features parametric polymorphism:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb2-1"><a href="#cb2-1"></a>func add:&lt;$t&gt; (a $t, b $t) $t <span class="op">{</span></span>
+<span id="cb2-2"><a href="#cb2-2"></a>  <span class="kw">return</span> a + b;</span>
+<span id="cb2-3"><a href="#cb2-3"></a><span class="op">}</span></span>
+<span id="cb2-4"><a href="#cb2-4"></a></span>
+<span id="cb2-5"><a href="#cb2-5"></a>func main() <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb2-6"><a href="#cb2-6"></a>  val a = add:&lt;<span class="dt">i32</span>&gt;(<span class="dv">1</span>, <span class="dv">2</span>);</span>
+<span id="cb2-7"><a href="#cb2-7"></a>  val b = add:&lt;<span class="dt">i8</span>&gt;(<span class="ch">&#39;a&#39;</span>, <span class="ch">&#39;b&#39;</span>);</span>
+<span id="cb2-8"><a href="#cb2-8"></a>  <span class="kw">return</span> a + <span class="dt">i32</span>(b);</span>
+<span id="cb2-9"><a href="#cb2-9"></a><span class="op">}</span></span></code></pre></div>
+<p><a href="./syntax.html">Here</a> is a comprehensive specification of Silk’s syntax.</p>
+<h2 id="semantics-and-features">Semantics and features</h2>
+<p>Silk is an <strong>imperative</strong> and <strong>statically typed</strong> language.</p>
+<p>Though safety is not a primary design goal, Silk’s features make writing unsafe code more difficult than it would otherwise be.</p>
+<h3 id="mutability">Mutability</h3>
+<p>The <code>val</code> and <code>var</code> keywords declare immutable values and mutable variables respectively. The immutability of values also applies to aggregate types (i.e structures and arrays).</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb3-1"><a href="#cb3-1"></a><span class="kw">type</span> my_type = <span class="kw">struct</span>(a <span class="dt">i32</span>, b <span class="dt">i32</span>, c <span class="dt">i32</span>);</span>
+<span id="cb3-2"><a href="#cb3-2"></a></span>
+<span id="cb3-3"><a href="#cb3-3"></a>func main() void <span class="op">{</span></span>
+<span id="cb3-4"><a href="#cb3-4"></a>  val foo = my_type(<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>);</span>
+<span id="cb3-5"><a href="#cb3-5"></a>  foo.a = <span class="dv">0</span>; <span class="co">// produces a compiler error</span></span>
+<span id="cb3-6"><a href="#cb3-6"></a></span>
+<span id="cb3-7"><a href="#cb3-7"></a>  <span class="co">// bar is a zero-initialized array of 16 my_types</span></span>
+<span id="cb3-8"><a href="#cb3-8"></a>  val bar = <span class="op">[</span>my_type; <span class="dv">16</span><span class="op">]</span>;</span>
+<span id="cb3-9"><a href="#cb3-9"></a>  bar<span class="op">[</span><span class="dv">1</span><span class="op">]</span>.c = <span class="dv">2</span>; <span class="co">// this also produces a compiler error</span></span>
+<span id="cb3-10"><a href="#cb3-10"></a><span class="op">}</span></span></code></pre></div>
+<p>Silk has distinct mutable and immutable pointer types. Taking the address of a value produces an immutable pointer, whereas taking the address of a variable produces a mutable pointer.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1"></a><span class="kw">type</span> my_type = <span class="kw">struct</span>(a <span class="dt">i32</span>, b <span class="dt">i32</span>, c <span class="dt">i32</span>);</span>
+<span id="cb4-2"><a href="#cb4-2"></a></span>
+<span id="cb4-3"><a href="#cb4-3"></a>func main() void <span class="op">{</span></span>
+<span id="cb4-4"><a href="#cb4-4"></a>  val foo = my_type(<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>);</span>
+<span id="cb4-5"><a href="#cb4-5"></a>  var foo_addr *my_type = &amp;foo;</span>
+<span id="cb4-6"><a href="#cb4-6"></a>  <span class="co">// foo_addr is an immutable pointer.</span></span>
+<span id="cb4-7"><a href="#cb4-7"></a>  <span class="co">// it is a var and can therefore be re-assigned</span></span>
+<span id="cb4-8"><a href="#cb4-8"></a>  <span class="co">// but cannot be write-dereferenced</span></span>
+<span id="cb4-9"><a href="#cb4-9"></a>  @foo_addr.a = <span class="dv">0</span>; <span class="co">// produces a compiler error</span></span>
+<span id="cb4-10"><a href="#cb4-10"></a></span>
+<span id="cb4-11"><a href="#cb4-11"></a>  var bar = my_type(<span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">6</span>);</span>
+<span id="cb4-12"><a href="#cb4-12"></a>  val bar_addr <span class="kw">mut</span>*my_type = &amp;bar;</span>
+<span id="cb4-13"><a href="#cb4-13"></a>  <span class="co">// bar_addr is a mutable pointer, which cannot be re-assigned</span></span>
+<span id="cb4-14"><a href="#cb4-14"></a>  <span class="co">// but can be write-dereferenced</span></span>
+<span id="cb4-15"><a href="#cb4-15"></a>  @bar_addr.b = <span class="dv">7</span>;</span>
+<span id="cb4-16"><a href="#cb4-16"></a><span class="op">}</span></span></code></pre></div>
+<p>Mutable and immutable pointers can never be cast to/from each other. A mutable pointer can be <em>promoted</em> to an immutable pointer when passed as an argument to a function – the function cannot mutate the object unless it also has a mutable pointer or direct access to the object.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb5-1"><a href="#cb5-1"></a><span class="co">// p is an immutable *i32</span></span>
+<span id="cb5-2"><a href="#cb5-2"></a>func f(p *<span class="dt">i32</span>) void <span class="op">{</span></span>
+<span id="cb5-3"><a href="#cb5-3"></a>  @p = <span class="dv">12</span>; <span class="co">// this produces a compiler error</span></span>
+<span id="cb5-4"><a href="#cb5-4"></a><span class="op">}</span></span>
+<span id="cb5-5"><a href="#cb5-5"></a></span>
+<span id="cb5-6"><a href="#cb5-6"></a>func main() void <span class="op">{</span></span>
+<span id="cb5-7"><a href="#cb5-7"></a>  var a = <span class="dv">12</span>;</span>
+<span id="cb5-8"><a href="#cb5-8"></a>  val a_addr = &amp;a;</span>
+<span id="cb5-9"><a href="#cb5-9"></a>  <span class="co">// a_addr is a mut*i32 that is promoted to an immutable *i32</span></span>
+<span id="cb5-10"><a href="#cb5-10"></a>  f(a_addr);</span>
+<span id="cb5-11"><a href="#cb5-11"></a>  <span class="co">// but it is still a mutable pointer in this function</span></span>
+<span id="cb5-12"><a href="#cb5-12"></a>  @a_addr = <span class="dv">13</span>;</span>
+<span id="cb5-13"><a href="#cb5-13"></a><span class="op">}</span></span></code></pre></div>
+<p>Additionally, only mutable pointers can be cast to/from integers. Silk’s mutability rules guarantee that:</p>
+<ul>
+<li>mutable pointers never point to immutable objects</li>
+<li>immutable pointers can only point to mutable objects when the objects can be mutated in the same function
+<ul>
+<li>(or when the objects are mutated elsewhere concurrently, but that’s a big can of worms)</li>
+</ul></li>
+</ul>
+<h3 id="aggregate-types">Aggregate types</h3>
+<p>Silk’s aggregate types behave similarly to their C counterparts, with a few key differences.</p>
+<p><strong>Arrays</strong> do not decay to pointers as in C. They generally behave as a single entity of data, much like structures.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb6-1"><a href="#cb6-1"></a>func g(arr *<span class="dt">i32</span>) void <span class="op">{}</span></span>
+<span id="cb6-2"><a href="#cb6-2"></a></span>
+<span id="cb6-3"><a href="#cb6-3"></a>func f(arr <span class="op">[</span><span class="dv">3</span><span class="op">]</span><span class="dt">i32</span>) void <span class="op">{}</span></span>
+<span id="cb6-4"><a href="#cb6-4"></a></span>
+<span id="cb6-5"><a href="#cb6-5"></a>func main() void <span class="op">{</span></span>
+<span id="cb6-6"><a href="#cb6-6"></a>  val a = <span class="op">{</span> <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span> <span class="op">}</span>;</span>
+<span id="cb6-7"><a href="#cb6-7"></a>  g(a); <span class="co">// this produces a compiler error</span></span>
+<span id="cb6-8"><a href="#cb6-8"></a>  f(a); <span class="co">// this does not</span></span>
+<span id="cb6-9"><a href="#cb6-9"></a>  g(&amp;a<span class="op">[</span><span class="dv">0</span><span class="op">]</span>); <span class="co">// this does not</span></span>
+<span id="cb6-10"><a href="#cb6-10"></a></span>
+<span id="cb6-11"><a href="#cb6-11"></a>  val b = <span class="op">[</span><span class="dt">i32</span>; <span class="dv">3</span><span class="op">]</span>;</span>
+<span id="cb6-12"><a href="#cb6-12"></a>  <span class="co">// b is a zero-initialized array of 3 i32s</span></span>
+<span id="cb6-13"><a href="#cb6-13"></a>  f(b);</span>
+<span id="cb6-14"><a href="#cb6-14"></a><span class="op">}</span></span></code></pre></div>
+<p>Silk does not support variable-length arrays. The size of every array must be known at compile time and is part of its type.</p>
+<p><strong>Structures</strong> are either <em>labeled</em> (every member has a name) or <em>unlabeled</em>. Unlabeled structures can be constructed with <em>struct literals</em>:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb7-1"><a href="#cb7-1"></a>func main() void <span class="op">{</span></span>
+<span id="cb7-2"><a href="#cb7-2"></a>  var a = (<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>);</span>
+<span id="cb7-3"><a href="#cb7-3"></a>  <span class="co">// (1, 2, 3) is a struct literal</span></span>
+<span id="cb7-4"><a href="#cb7-4"></a>  <span class="co">// a is of type struct(i32, i32, i32)</span></span>
+<span id="cb7-5"><a href="#cb7-5"></a></span>
+<span id="cb7-6"><a href="#cb7-6"></a>  var b = a.<span class="dv">0</span>; <span class="co">// its members are accessed by &#39;index&#39;</span></span>
+<span id="cb7-7"><a href="#cb7-7"></a>  var c = a.<span class="dv">1</span>;</span>
+<span id="cb7-8"><a href="#cb7-8"></a>  var d = a.<span class="dv">2</span>;</span>
+<span id="cb7-9"><a href="#cb7-9"></a><span class="op">}</span></span></code></pre></div>
+<p>Labeled structs can be defined as newtypes or constructed ad-hoc:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb8-1"><a href="#cb8-1"></a><span class="kw">type</span> my_type = <span class="kw">struct</span>(num <span class="dt">i32</span>, chr <span class="dt">i8</span>, flag <span class="dt">bool</span>);</span>
+<span id="cb8-2"><a href="#cb8-2"></a></span>
+<span id="cb8-3"><a href="#cb8-3"></a>func main() void <span class="op">{</span></span>
+<span id="cb8-4"><a href="#cb8-4"></a>  var beans = my_type(<span class="dv">1</span>, <span class="ch">&#39;B&#39;</span>, <span class="cn">true</span>);</span>
+<span id="cb8-5"><a href="#cb8-5"></a>  var b = beans.num;</span>
+<span id="cb8-6"><a href="#cb8-6"></a>  <span class="co">// beans has members &#39;num&#39;, &#39;chr&#39; and &#39;flag&#39;</span></span>
+<span id="cb8-7"><a href="#cb8-7"></a></span>
+<span id="cb8-8"><a href="#cb8-8"></a>  var cake = <span class="kw">struct</span>(asdf <span class="dt">i32</span>, qwer <span class="dt">u32</span>)(<span class="dv">12</span>, <span class="dv">12u</span>);</span>
+<span id="cb8-9"><a href="#cb8-9"></a>  var x = cake.qwer;</span>
+<span id="cb8-10"><a href="#cb8-10"></a>  <span class="co">// cake has members &#39;asdf&#39; and &#39;qwer&#39;</span></span>
+<span id="cb8-11"><a href="#cb8-11"></a><span class="op">}</span></span></code></pre></div>
+<p>Structures are aligned by default, but can be <em>packed</em>.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb9-1"><a href="#cb9-1"></a><span class="kw">type</span> packed_type = packed(a <span class="dt">i32</span>, b <span class="dt">i32</span>, c <span class="dt">i32</span>);</span>
+<span id="cb9-2"><a href="#cb9-2"></a></span>
+<span id="cb9-3"><a href="#cb9-3"></a>func main() void <span class="op">{</span></span>
+<span id="cb9-4"><a href="#cb9-4"></a>  val a = (: <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span> :);</span>
+<span id="cb9-5"><a href="#cb9-5"></a>  <span class="co">// a is a packed unlabeled struct</span></span>
+<span id="cb9-6"><a href="#cb9-6"></a></span>
+<span id="cb9-7"><a href="#cb9-7"></a>  val b = packed_type(<span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">6</span>);</span>
+<span id="cb9-8"><a href="#cb9-8"></a>  <span class="co">// b is a packed labeled struct</span></span>
+<span id="cb9-9"><a href="#cb9-9"></a><span class="op">}</span></span></code></pre></div>
+<h3 id="user-defined-types-and-parametric-polymorphism">User-defined types and parametric polymorphism</h3>
+<p>Types are defined with the <code>type</code> keyword:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb10-1"><a href="#cb10-1"></a><span class="kw">type</span> int = <span class="dt">i32</span>;</span>
+<span id="cb10-2"><a href="#cb10-2"></a></span>
+<span id="cb10-3"><a href="#cb10-3"></a>func main() int <span class="op">{</span></span>
+<span id="cb10-4"><a href="#cb10-4"></a>  val a int = <span class="dv">12</span>;</span>
+<span id="cb10-5"><a href="#cb10-5"></a>  val b <span class="dt">i32</span> = a;</span>
+<span id="cb10-6"><a href="#cb10-6"></a>  <span class="kw">return</span> b;</span>
+<span id="cb10-7"><a href="#cb10-7"></a><span class="op">}</span></span></code></pre></div>
+<p>Notice that the <code>int</code> type defined in the previous example is not a newtype; it is an alias for <code>i32</code>.</p>
+<p>Unlike other types, structs are unique. To define a newtype, simply use a one-member struct:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb11-1"><a href="#cb11-1"></a><span class="kw">type</span> my_i32 = <span class="kw">struct</span>(<span class="dt">i32</span>);</span>
+<span id="cb11-2"><a href="#cb11-2"></a><span class="kw">type</span> other_i32 = <span class="kw">struct</span>(<span class="dt">i32</span>);</span>
+<span id="cb11-3"><a href="#cb11-3"></a></span>
+<span id="cb11-4"><a href="#cb11-4"></a>func main() my_i32 <span class="op">{</span></span>
+<span id="cb11-5"><a href="#cb11-5"></a>  val a = <span class="dv">12</span>;</span>
+<span id="cb11-6"><a href="#cb11-6"></a>  val b = my_i32(a);</span>
+<span id="cb11-7"><a href="#cb11-7"></a>  val c = other_i32(b.<span class="dv">0</span>);</span>
+<span id="cb11-8"><a href="#cb11-8"></a>  <span class="co">// a, b, c are of distinct types</span></span>
+<span id="cb11-9"><a href="#cb11-9"></a><span class="op">}</span></span></code></pre></div>
+<p>Forward declaring a type allows it to be defined recursively. A singly linked list type could be defined as follows:</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb12-1"><a href="#cb12-1"></a><span class="kw">type</span> list;</span>
+<span id="cb12-2"><a href="#cb12-2"></a><span class="kw">type</span> list = <span class="kw">struct</span>(value <span class="dt">i32</span>, next <span class="kw">mut</span>*list);</span>
+<span id="cb12-3"><a href="#cb12-3"></a></span>
+<span id="cb12-4"><a href="#cb12-4"></a>func make_list_node(value <span class="dt">i32</span>) <span class="op">{</span></span>
+<span id="cb12-5"><a href="#cb12-5"></a>  <span class="kw">return</span> list(value, <span class="kw">mut</span>*list (<span class="dv">0</span>));</span>
+<span id="cb12-6"><a href="#cb12-6"></a><span class="op">}</span></span>
+<span id="cb12-7"><a href="#cb12-7"></a></span>
+<span id="cb12-8"><a href="#cb12-8"></a>func main() <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb12-9"><a href="#cb12-9"></a>  var head = make_list_node(<span class="dv">1</span>);</span>
+<span id="cb12-10"><a href="#cb12-10"></a>  var tail = make_list_node(<span class="dv">2</span>);</span>
+<span id="cb12-11"><a href="#cb12-11"></a>  head.next = &amp;tail;</span>
+<span id="cb12-12"><a href="#cb12-12"></a></span>
+<span id="cb12-13"><a href="#cb12-13"></a>  <span class="kw">return</span> @(head.next).value;</span>
+<span id="cb12-14"><a href="#cb12-14"></a><span class="op">}</span></span></code></pre></div>
+<p>Silk’s types and functions can also accept type parameters:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb13-1"><a href="#cb13-1"></a><span class="co">// binary tree with key and value</span></span>
+<span id="cb13-2"><a href="#cb13-2"></a><span class="kw">type</span> bintree:&lt;$key_type, $value_type&gt;;</span>
+<span id="cb13-3"><a href="#cb13-3"></a><span class="kw">type</span> bintree:&lt;$kt, $vt&gt; = <span class="kw">struct</span>(</span>
+<span id="cb13-4"><a href="#cb13-4"></a>  key $kt, value $vt,</span>
+<span id="cb13-5"><a href="#cb13-5"></a>  left <span class="kw">mut</span>*bintree:&lt;$kt, $vt&gt;,</span>
+<span id="cb13-6"><a href="#cb13-6"></a>  right <span class="kw">mut</span>*bintree:&lt;$kt, $vt&gt;</span>
+<span id="cb13-7"><a href="#cb13-7"></a>);</span>
+<span id="cb13-8"><a href="#cb13-8"></a></span>
+<span id="cb13-9"><a href="#cb13-9"></a>func make_bintree_node:&lt;$kt, $vt&gt;(key $kt, value $vt) bintree:&lt;$kt, $vt&gt; <span class="op">{</span></span>
+<span id="cb13-10"><a href="#cb13-10"></a>  val null = <span class="kw">mut</span>*bintree:&lt;$kt, $vt&gt; (<span class="dv">0</span>);</span>
+<span id="cb13-11"><a href="#cb13-11"></a>  <span class="kw">return</span> bintree:&lt;$kt, $vt&gt;(key, value, null, null);</span>
+<span id="cb13-12"><a href="#cb13-12"></a><span class="op">}</span></span>
+<span id="cb13-13"><a href="#cb13-13"></a></span>
+<span id="cb13-14"><a href="#cb13-14"></a>func main() <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb13-15"><a href="#cb13-15"></a>  var root = make_bintree_node:&lt;*<span class="dt">i8</span>, <span class="dt">i32</span>&gt;(<span class="st">&quot;hello&quot;</span>, <span class="dv">1</span>);</span>
+<span id="cb13-16"><a href="#cb13-16"></a>  var child = make_bintree_node:&lt;*<span class="dt">i8</span>, <span class="dt">i32</span>&gt;(<span class="st">&quot;world&quot;</span>, <span class="dv">2</span>);</span>
+<span id="cb13-17"><a href="#cb13-17"></a>  root.right = &amp;child;</span>
+<span id="cb13-18"><a href="#cb13-18"></a>  <span class="kw">return</span> @(root.right).value;</span>
+<span id="cb13-19"><a href="#cb13-19"></a><span class="op">}</span></span></code></pre></div>
+<p>(This syntax is exceptionally ugly, I’m working on it.)</p>
+<h3 id="other-miscellaneous-things">Other miscellaneous things</h3>
+<p>Silk will never implicitly cast or coerce types. This is both a design choice and a product of my own laziness.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb14-1"><a href="#cb14-1"></a>func main() <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb14-2"><a href="#cb14-2"></a>  <span class="co">// a is of type u64 (&#39;u&#39;: unsigned, &#39;l&#39;: long i.e 64-bit)</span></span>
+<span id="cb14-3"><a href="#cb14-3"></a>  val a = 125ul;</span>
+<span id="cb14-4"><a href="#cb14-4"></a></span>
+<span id="cb14-5"><a href="#cb14-5"></a>  <span class="co">// this produces a compiler error since</span></span>
+<span id="cb14-6"><a href="#cb14-6"></a>  <span class="co">// 12 is an i32</span></span>
+<span id="cb14-7"><a href="#cb14-7"></a>  val b = a + <span class="dv">12</span>;</span>
+<span id="cb14-8"><a href="#cb14-8"></a></span>
+<span id="cb14-9"><a href="#cb14-9"></a>  <span class="co">// these work as expected</span></span>
+<span id="cb14-10"><a href="#cb14-10"></a>  val c = a + 12ul;</span>
+<span id="cb14-11"><a href="#cb14-11"></a>  val d = a + <span class="dt">u64</span>(<span class="dv">12</span>);</span>
+<span id="cb14-12"><a href="#cb14-12"></a><span class="op">}</span></span></code></pre></div>
+<p>If every member in a struct literal is an lvalue, the struct literal can be an lvalue. This enables some cool ‘group’ assignment stuff.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb15-1"><a href="#cb15-1"></a>func main() <span class="dt">i32</span> <span class="op">{</span></span>
+<span id="cb15-2"><a href="#cb15-2"></a>  var a = <span class="dv">1</span>;</span>
+<span id="cb15-3"><a href="#cb15-3"></a>  var b = <span class="dv">2</span>;</span>
+<span id="cb15-4"><a href="#cb15-4"></a>  var c = <span class="dv">3</span>;</span>
+<span id="cb15-5"><a href="#cb15-5"></a>  val c_ptr = &amp;c;</span>
+<span id="cb15-6"><a href="#cb15-6"></a></span>
+<span id="cb15-7"><a href="#cb15-7"></a>  <span class="co">// all of the following statements assign</span></span>
+<span id="cb15-8"><a href="#cb15-8"></a>  <span class="co">// a, b, c to 4, 5, 6 respectively</span></span>
+<span id="cb15-9"><a href="#cb15-9"></a>  (a, b, c) = (<span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">6</span>);</span>
+<span id="cb15-10"><a href="#cb15-10"></a>  (a, (b, c)) = (<span class="dv">4</span>, (<span class="dv">5</span>, <span class="dv">6</span>));</span>
+<span id="cb15-11"><a href="#cb15-11"></a>  (a, b, @c_ptr) = (<span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">6</span>);</span>
+<span id="cb15-12"><a href="#cb15-12"></a></span>
+<span id="cb15-13"><a href="#cb15-13"></a>  <span class="co">// this will swap a and b</span></span>
+<span id="cb15-14"><a href="#cb15-14"></a>  (a, b) = (b, a);</span>
+<span id="cb15-15"><a href="#cb15-15"></a></span>
+<span id="cb15-16"><a href="#cb15-16"></a>  <span class="kw">return</span> a;</span>
+<span id="cb15-17"><a href="#cb15-17"></a><span class="op">}</span></span></code></pre></div>
+<h2 id="build">Build</h2>
+<p>In order to build Silk, you will need:</p>
+<ul>
+<li><a href="https://ocaml.org/">ocaml</a> toolchain</li>
+<li><a href="https://dune.build/">dune</a> build tool</li>
+<li><a href="http://gallium.inria.fr/~fpottier/menhir/">menhir</a> parser generator</li>
+</ul>
+<p>Then simply acquire the <a href="https://github.com/AjayMT/silk">source code</a> and <code>./build.sh</code>.</p>
+<p>This will produce a <code>silk.exe</code> executable in the <code>_build/default/src/</code> directory.</p>
+<h2 id="usage">Usage</h2>
+<p>In order to use Silk, you will need the <a href="http://llvm.org/">LLVM</a> toolchain.</p>
+<p>Since I have not written a CLI yet, the <code>silk.exe</code> executable reads Silk from stdin and writes LLVM to stdout. LLVM can be compiled to native object files with the <code>llc</code> tool.</p>
+<p>For example:</p>
+<pre><code>$ cat hello.silk
+extern func printf(s *i8) void;
+
+func main() i32 {
+  printf(&quot;hello, world\n&quot;);
+  return 0;
+}
+$ silk &lt; hello.silk &gt; hello.llvm
+$ llc -filetype=obj hello.llvm -o hello.o
+$ ld -o hello hello.o -lc
+$ ./hello
+hello, world</code></pre>
+<p>The LLVM output can be compiled directly without writing it to a file:</p>
+<pre><code>$ silk &lt; hello.silk | llc -filetype=obj -o hello.o -</code></pre>
+<p>Silk does not include a preprocessor or package/module system of any kind. Your favorite C compiler can probably produce preprocessor output:</p>
+<pre><code>$ cc -E -x c hello.silk &gt; hello.silk.out
+$ # Compile hello.silk.out as described above</code></pre>
+<h2 id="todos-roadmap">TODOs / Roadmap</h2>
+<ul>
+<li>Un-spaghetti the code and produce better error messages
+<ul>
+<li>Possibly by rewriting the whole thing</li>
+</ul></li>
+<li>Better type parameter syntax</li>
+<li>Cool optimization stuff</li>
+<li>Make a real CLI</li>
+<li>More docs!</li>
+</ul>
+<h2 id="license">License</h2>
+<p>Silk is distributed under the terms of the MIT License.</p>
+<hr />
+<p>Silk is one of my <a href="http://ajaymt.github.io/">many projects</a>. If you find this (or any of my work) interesting, please <a href="mailto:ajaymt2@illinois.edu">contact me</a>! I am <a href="https://www.linkedin.com/in/ajay-tatachar-980556193/">available for hire</a>.</p>
 </body>
 </html>
