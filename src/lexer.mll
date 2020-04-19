@@ -234,6 +234,7 @@ STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
 | "["         { LBRACKET }
 | "]"         { RBRACKET }
 | "//" [^ '\n']* '\n' { token lexbuf }
+| "#"  [^ '\n']* '\n' { token lexbuf }
 | whitespace+ { token lexbuf }
 | '\n'        { token lexbuf }
 | eof         { EOF }
