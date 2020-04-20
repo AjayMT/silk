@@ -1,6 +1,2 @@
 # Silk Syntax
-## General
-
-## Keywords
-
-## Operators
+WIP, come back later!
