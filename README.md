@@ -22,7 +22,7 @@ Don't expect it to work well (or at all).
 Silk is heavily inspired by [Go](https://golang.org/) and other modern programming
 languages.
 
-```rust
+```
 // this is a comment
 
 extern func printf(s *i8) void;
@@ -50,7 +50,7 @@ Notably,
 
 Silk also features parametric polymorphism:
 
-```rust
+```
 func add:<$t> (a $t, b $t) $t {
   return a + b;
 }
@@ -77,7 +77,7 @@ The `val` and `var` keywords declare immutable values and mutable variables
 respectively. The immutability of values also applies to aggregate types (i.e
 structures and arrays).
 
-```rust
+```
 type my_type = struct(a i32, b i32, c i32);
 
 func main() void {
@@ -94,7 +94,7 @@ Silk has distinct mutable and immutable pointer types. Taking the address of a
 value produces an immutable pointer, whereas taking the address of a variable
 produces a mutable pointer.
 
-```rust
+```
 type my_type = struct(a i32, b i32, c i32);
 
 func main() void {
@@ -118,7 +118,7 @@ A mutable pointer can be *promoted* to an immutable pointer when passed as an ar
 to a function -- the function cannot mutate the object unless it also has a mutable
 pointer or direct access to the object.
 
-```rust
+```
 // p is an immutable *i32
 func f(p *i32) void {
   @p = 12; // this produces a compiler error
@@ -151,7 +151,7 @@ differences.
 **Arrays** do not decay to pointers as in C. They generally behave as a single
 entity of data, much like structures.
 
-```rust
+```
 func g(arr *i32) void {}
 
 func f(arr [3]i32) void {}
@@ -173,7 +173,7 @@ at compile time and is part of its type.
 
 **Structures** are either *labeled* (every member has a name) or *unlabeled*.
 Unlabeled structures can be constructed with *struct literals*:
-```rust
+```
 func main() void {
   var a = (1, 2, 3);
   // (1, 2, 3) is a struct literal
@@ -186,7 +186,7 @@ func main() void {
 ```
 
 Labeled structs can be defined as newtypes or constructed ad-hoc:
-```rust
+```
 type my_type = struct(num i32, chr i8, flag bool);
 
 func main() void {
@@ -201,7 +201,7 @@ func main() void {
 ```
 
 Structures are aligned by default, but can be *packed*.
-```rust
+```
 type packed_type = packed(a i32, b i32, c i32);
 
 func main() void {
@@ -217,7 +217,7 @@ func main() void {
 
 Types are defined with the `type` keyword:
 
-```rust
+```
 type int = i32;
 
 func main() int {
@@ -232,7 +232,7 @@ an alias for `i32`.
 
 Unlike other types, structs are unique. To define a newtype, simply use a
 one-member struct:
-```rust
+```
 type my_i32 = struct(i32);
 type other_i32 = struct(i32);
 
@@ -247,7 +247,7 @@ func main() my_i32 {
 Forward declaring a type allows it to be defined recursively.
 A singly linked list type could be defined as follows:
 
-```rust
+```
 type list;
 type list = struct(value i32, next mut*list);
 
@@ -266,7 +266,7 @@ func main() i32 {
 
 Silk's types and functions can also accept type parameters:
 
-```rust
+```
 // binary tree with key and value
 type bintree:<$key_type, $value_type>;
 type bintree:<$kt, $vt> = struct(
@@ -295,7 +295,7 @@ func main() i32 {
 Silk will never implicitly cast or coerce types. This is both a design choice and a
 product of my own laziness.
 
-```rust
+```
 func main() i32 {
   // a is of type u64 ('u': unsigned, 'l': long i.e 64-bit)
   val a = 125ul;
@@ -313,7 +313,7 @@ func main() i32 {
 If every member in a struct literal is an lvalue, the struct literal can be an
 lvalue. This enables some cool 'group' assignment stuff.
 
-```rust
+```
 func main() i32 {
   var a = 1;
   var b = 2;
