@@ -1,4 +1,4 @@
-#1/bin/sh
+#!/bin/sh
 
 dune clean
 rm -f silk
