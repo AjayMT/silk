@@ -19,17 +19,18 @@ code {
 }
 
 pre {
-    border: 1px solid #ccc;
+    background-color: #ffffee;
+    border: 1px solid #eee;
     padding: 20px;
 }
 
 a {
-    color: #004B6B;
-    border-bottom: 1px dotted #004B6B;
+    color: #0000aa;
+    border-bottom: 1px dotted #0000aa;
     text-decoration: none;
 }
 
 a:hover {
     color: #fff;
-    background-color: #004B6B;
+    background-color: #0000aa;
 }
