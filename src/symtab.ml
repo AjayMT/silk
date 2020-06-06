@@ -5,8 +5,6 @@
 
 module SymtabM = Map.Make(String)
 
-type valness = Val | Var
-
 type silktype = I of int
               | U of int
               | F of int
@@ -19,12 +17,55 @@ type silktype = I of int
               | TypeAlias of string * silktype
               | TypeStub of string
 
-type symbol = Value of valness * silktype * symbol SymtabM.t option
+let rec show_silktype st = match st with
+  | I i -> "i" ^ (string_of_int i) | U i -> "u" ^ (string_of_int i)
+  | F i -> "f" ^ (string_of_int i)
+  | Bool -> "bool" | Void -> "void"
+  | Pointer st -> "*" ^ (show_silktype st)
+  | MutPointer st -> "mut*" ^ (show_silktype st)
+  | Array (i, st) -> "[" ^ (string_of_int i) ^ "]" ^ (show_silktype st)
+  | Struct (packed, sts) ->
+     let prefix = if packed then "(:" else "(" in
+     let suffix = if packed then ":)" else ")" in
+     prefix ^ (String.concat "," @@ List.map show_silktype sts) ^ suffix
+  | StructLabeled (packed, pairs) ->
+     let prefix = if packed then "(:" else "(" in
+     let suffix = if packed then ":)" else ")" in
+     let serialize_pair (n, t) = n ^ "|" ^ (show_silktype t) in
+     prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
+  | Function (args, rt) ->
+     "func (" ^ (String.concat ", " @@ List.map show_silktype args) ^ ") "
+     ^ (show_silktype rt)
+  | TypeAlias (s, _) -> s
+  | TypeStub s -> s
+
+(*
+ * The symbol table is a map of names (string) to symbols (Type or Value).
+ * The properties of the Value variant are:
+ *     1: whether the value is immutable   (bool)
+ *     2: the type of the value            (silktype)
+ *     3: an optional 'child' symbol table (symbol SymtabM.t option)
+ *
+ * The third property is used to store the local symbol tables of functions
+ * and blocks. This makes the symbol table of the entire program a tree of sorts;
+ * the root only has top-level types and declarations, and each function value
+ * has a child symbol table containing its local symbols.
+ *)
+
+type symbol = Value of bool * silktype * symbol SymtabM.t option
             | Type of silktype
 
 
 let ( let* ) x f = Result.bind x f
 let ( let+ ) x f = Result.map f x
+
+(*
+ * find_symtab_stack finds a symbol with a given name in a 'stack' of symbol tables.
+ * The 'stack' is a list of symbol tables starting with the innermost/lowest and
+ * going to the outermost (top-level symbols) i.e the root.
+ * The ordering of the stack means that this function will always find the closest
+ * in scope i.e most local symbol with a given name.
+ *)
 
 let rec find_symtab_stack name ststack = match ststack with
   | [] -> None
@@ -32,6 +73,12 @@ let rec find_symtab_stack name ststack = match ststack with
      match SymtabM.find_opt name z with
      | Some v -> Some v
      | None -> find_symtab_stack name zs
+
+
+(*
+ * resolve_type_alias finds the base type of a type alias or newtype.
+ * When resolving a forward-declared type (type stub) it searches the symbol table.
+ *)
 
 let rec resolve_type_alias symtab_stack t = match t with
   | TypeAlias (_, t) -> resolve_type_alias symtab_stack t
@@ -41,6 +88,12 @@ let rec resolve_type_alias symtab_stack t = match t with
      | _ -> Error ("Error: Failed to resolve type " ^ name)
      end
   | _ -> Ok t
+
+
+(*
+ * compare_types compares two types for structural equivalence, accounting for type
+ * aliases and newtypes.
+ *)
 
 let rec compare_types symtab_stack a b =
   let compare_types = compare_types symtab_stack in
@@ -70,6 +123,7 @@ let rec compare_types symtab_stack a b =
        | _ -> false
        end
   | (TypeAlias (_, a), b) ->
+     (* aliases of structs are newtypes *)
      begin match (resolve_type_alias symtab_stack a) with
      | Ok Struct _ | Ok StructLabeled _ -> false
      | Ok a -> compare_types a b
@@ -103,10 +157,18 @@ let rec compare_types symtab_stack a b =
        else false
   | (a, b) -> a = b
 
+
+(*
+ * check_valid_cast checks whether one type can be cast to another.
+ *)
+
 let rec check_valid_cast symtab_stack cast_t expr_t =
   let check_valid_cast = check_valid_cast symtab_stack in
   let compare_types = compare_types symtab_stack in
-  let err = Error "Error: Invalid type cast" in
+  let err =
+    Error ("Error: Invalid type cast from '" ^ (show_silktype expr_t)
+           ^ "' to '" ^ (show_silktype cast_t) ^ "'")
+  in
   match cast_t with
   | I _ | U _ | Bool ->
      begin match expr_t with
@@ -134,6 +196,7 @@ let rec check_valid_cast symtab_stack cast_t expr_t =
   | _ -> if compare_types cast_t expr_t then Ok ()
          else err
 
+(* convert a literal type to a silktype *)
 let silktype_of_literal_type l = match l with
   | Parsetree.LI8 _  -> I 8
   | Parsetree.LI16 _ -> I 16
@@ -147,6 +210,13 @@ let silktype_of_literal_type l = match l with
   | Parsetree.LF64 _ -> F 64
   | Parsetree.LBool _ -> Bool
   | Parsetree.LString _ -> Pointer (I 8)
+
+
+(*
+ * silktype_of_asttype converts an AST type into a silk type.
+ * It looks up aliases in the symbol table and ensures that there
+ * are no uninstantiated templates.
+ *)
 
 let rec silktype_of_asttype symtab_stack t = match t with
   | Parsetree.I8  -> Ok (I 8)
@@ -195,56 +265,88 @@ let rec silktype_of_asttype symtab_stack t = match t with
      begin match find_symtab_stack name symtab_stack with
      | Some (Type t) -> Ok (TypeAlias (name, t))
      | Some (Value _) ->
-        Error ("Error: " ^ name ^ " is not a type")
-     | None -> Error ("Error: type " ^ name ^ " undefined")
+        Error ("Error: '" ^ name ^ "' is not a type")
+     | None -> Error ("Error: type '" ^ name ^ "' undefined")
      end
   | Parsetree.AliasTemplateInstance _ ->
-     Error ("Error: Failed to instantiate template " ^ (Template.serialize_type t))
-  | Parsetree.Template n -> Error ("Error: Failed to replace template " ^ n)
+     Error ("Error: Failed to instantiate template '" ^ (Parsetree.show_type t) ^ "'")
+  | Parsetree.Template n -> Error ("Error: Failed to replace template '" ^ n ^ "'")
+
+
+(*
+ * eval_expr_type evaluates the type of an expression.
+ * In doing so, it ensures that the expression is semantically valid and does
+ * not violate typing or mutability rules.
+ *)
 
 let rec eval_expr_type symtab_stack expr =
   let compare_types = compare_types symtab_stack in
   let check_valid_cast = check_valid_cast symtab_stack in
 
+  (* check_mutable checks if an expression is mutable *)
   let rec check_mutable exp = match exp with
     | Parsetree.Identifier name ->
        let v = find_symtab_stack name symtab_stack in
        begin match v with
-       | Some (Value (Var, _, _)) -> Ok true
-       | Some (Value (Val, _, _)) -> Ok false
-       | _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Some (Value (false, _, _)) -> Ok true
+       | Some (Value (true, _, _)) -> Ok false
+       | _ -> Error ("Error: Expected value, found type '" ^ name
+                     ^ "' in expression '" ^ (Parsetree.show_expr exp) ^ "'")
        end
-    | Parsetree.UnOp (Parsetree.Deref, exp) ->
-       let* t = eval_expr_type symtab_stack exp in
+    | Parsetree.UnOp (Parsetree.Deref, dexp) ->
+       let* t = eval_expr_type symtab_stack dexp in
        begin match t with
        | MutPointer _ -> Ok true
        | Pointer _ -> Ok false
-       | _ -> Error "Error: Incorrect type for unary operation"
+       | _ ->
+          Error ("Error: Incorrect type for unary operation in expression '"
+                 ^ (Parsetree.show_expr exp) ^ "'")
        end
     | Parsetree.Index (array, _) -> check_mutable array
     | Parsetree.StructIndexAccess (struct_expr, _)
       | Parsetree.StructMemberAccess (struct_expr, _) -> check_mutable struct_expr
-    | _ -> Error "Error: Cannot get address of temporary value"
+    | _ ->
+       Error ("Error: Cannot check mutability of temporary value in expression '"
+              ^ (Parsetree.show_expr exp) ^ "'")
   in
 
   match expr with
   | Parsetree.TemplateInstance (name, types) ->
-     Error ("Error: Failed to instantiate template " ^
-              (Template.serialize_instance name types))
+     Error ("Error: Failed to instantiate template in expression '" ^
+              (Parsetree.show_expr expr) ^ "'")
+
   | Parsetree.Identifier name ->
      begin match find_symtab_stack name symtab_stack with
-     | Some (Type _) -> Error ("Error: Expected value, found type: " ^ name)
+     | Some (Type _) ->
+        Error ("Error: Expected value, found type '" ^ name
+               ^ "' in expression '" ^ (Parsetree.show_expr expr) ^ "'")
      | Some (Value (_, t, _)) -> Ok t
-     | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+     | None -> Error ("Error: Identifier '" ^ name ^ "' undefined in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
      end
   | Parsetree.Literal l -> Ok (silktype_of_literal_type l)
+
   | Parsetree.Assignment (lval, e) ->
      let* exprtype = eval_expr_type symtab_stack e in
+
+     (* check_lval checks the type of an lval and that it is mutable
+       in an assignment expression. The use of this recursive function is
+       necessitated by Silk's struct/group assignment semantics. *)
      let rec check_lval lval expected_type =
        let* lval_type = eval_expr_type symtab_stack lval in
        match lval with
        | Parsetree.StructLiteral (_, exprs) ->
-          let err = Error "Error: Mismatched types in struct assignment" in
+          (* struct assignments have to be handled specially: each member
+            is checked instead of the whole struct, since unlabeled
+            struct literals can be assigned to labeled structs. *)
+          let err =
+            Error ("Error: Mismatched type of lval '"
+                   ^ (Parsetree.show_expr lval)
+                   ^ "', expected '" ^ (show_silktype expected_type)
+                   ^ "' but found '" ^ (show_silktype lval_type)
+                   ^ "' in struct assignment in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
+          in
           let add_lval acc lv et =
             let* acc = acc in
             let+ t = check_lval lv et in t
@@ -261,9 +363,11 @@ let rec eval_expr_type symtab_stack expr =
           let+ lvals = List.fold_left2 add_lval (Ok expected_type) exprs valtypes in
           expected_type
        | _ ->
+          (* checking every other type of lvalue is a simple type comparison
+             and mutability check. *)
           let* (err1, err2) = match lval with
             | Parsetree.Identifier (n) ->
-               Ok ("assignment of " ^ n, "re-assign val " ^ n)
+               Ok ("assignment of '" ^ n ^ "'", "re-assign val '" ^ n ^ "'")
             | Parsetree.UnOp (Parsetree.Deref, _) ->
                Ok ("pointer assignment", "write immutable pointer")
             | Parsetree.Index (_, _) ->
@@ -271,22 +375,37 @@ let rec eval_expr_type symtab_stack expr =
             | Parsetree.StructIndexAccess (_, _)
               | Parsetree.StructMemberAccess (_, _) ->
                Ok ("struct member assignment", "write immutable struct")
-            | _ -> Error "Error: Invalid lvalue expression"
+            | _ -> Error ("Error: Invalid lvalue expression '"
+                          ^ (Parsetree.show_expr lval) ^ "' in expression '"
+                          ^ (Parsetree.show_expr expr) ^ "'")
           in
           let* mut = check_mutable lval in
           if mut then
             if compare_types lval_type expected_type then Ok expected_type
-            else Error ("Error: Mismatched types in " ^ err1)
+            else Error ("Error: Mismatched types in " ^ err1
+                        ^ ", expected '" ^ (show_silktype expected_type)
+                        ^ "' but found '" ^ (show_silktype lval_type)
+                        ^ "' in expression '"
+                        ^ (Parsetree.show_expr expr) ^ "'")
           else
-            Error ("Error: Cannot " ^ err2)
+            Error ("Error: Cannot " ^ err2 ^ " in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
      in
      check_lval lval exprtype
+
   | Parsetree.TypeCast (t, expr) ->
      let* expr_t = eval_expr_type symtab_stack expr in
      let* cast_t = silktype_of_asttype symtab_stack t in
      let+ () = check_valid_cast cast_t expr_t in
      cast_t
+
   | Parsetree.FunctionCall (f, args) ->
+     (* function calls have to be treated specially because of the limitations
+        of the parser, since (non-primitive-)type casts and struct initialization
+        are parsed as function calls. *)
+
+     (* match_args matches a list of expressions with a list of (argument) types.
+        it allows mutable pointers to be promoted to immutable pointers *)
      let match_arg_types argtypes exprs =
        let match_types acc t exp =
          let* _ = acc in
@@ -295,52 +414,84 @@ let rec eval_expr_type symtab_stack expr =
              | (Pointer a, MutPointer b) -> (a, b)
              | (a, b) -> (a, b) in
            if compare_types a b then Ok t
-           else Error "Error: Mismatched types in function call"
+           else Error ("Error: Mismatched types of expression '"
+                       ^ (Parsetree.show_expr exp)
+                       ^ "', expected '" ^ (show_silktype et)
+                       ^ "' but found '" ^ (show_silktype t)
+                       ^ "' in function call in expression '"
+                       ^ (Parsetree.show_expr expr) ^ "'")
          in
          Result.bind (eval_expr_type symtab_stack exp) check_arg_type
        in
        if List.length argtypes = List.length args then
          List.fold_left2 match_types (Ok Bool) argtypes exprs
-       else Error "Error: Incorrect number of arguments"
+       else Error ("Error: Incorrect number of arguments, expected "
+                   ^ (string_of_int @@ List.length argtypes) ^ " but found "
+                   ^ (string_of_int @@ List.length args)
+                   ^ " in function call in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
      in
+
      let check_function_type stype = match stype with
        | Function (argtypes, t) ->
           let+ _ = match_arg_types argtypes args in t
-       | _ -> Error "Error: Expression is not a function"
+       | _ -> Error ("Error: Expression of type '"
+                     ^ (show_silktype stype)
+                     ^ "' is not a function in function call in expression '"
+                     ^ (Parsetree.show_expr expr) ^ "'")
      in
+
      begin match (eval_expr_type symtab_stack f) with
      | Ok t -> check_function_type t
      | Error e ->
-        let rec process_fexp f =  match f with
-          | Parsetree.Identifier t ->
-             let* silktype =
-               silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
-             in
-             let* resolved_type = resolve_type_alias symtab_stack silktype in
-             begin match resolved_type with
-             | Struct (_, l) ->
-                if List.length args <> List.length l
-                then Error "Error: Incorrect number of members in struct initialization"
-                else eval_expr_type symtab_stack
-                       (Parsetree.StructInit (Parsetree.TypeAlias t, args))
-             | StructLabeled (_, l) ->
-                if List.length args <> List.length l
-                then Error "Error: Incorrect number of members in struct initialization"
-                else eval_expr_type symtab_stack
-                       (Parsetree.StructInit (Parsetree.TypeAlias t, args))
-             | _ ->
-                if List.length args <> 1
-                then Error "Error: Invalid type cast expression"
-                else eval_expr_type symtab_stack
-                       (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd args))
-             end
-          | _ -> Error e
-        in process_fexp f
+        (* if we fail to evaluate the expression as a function call (if 'f'
+           is not a function expression), we try to evaluate it as a type
+           cast or struct initialization. *)
+        begin match f with
+        | Parsetree.Identifier t ->
+           let* silktype =
+             silktype_of_asttype symtab_stack (Parsetree.TypeAlias t)
+           in
+           let* resolved_type = resolve_type_alias symtab_stack silktype in
+           begin match resolved_type with
+           | Struct (_, l) ->
+              if List.length args <> List.length l
+              then Error ("Error: Incorrect number of members, expected "
+                          ^ (string_of_int @@ List.length l) ^ " but found "
+                          ^ (string_of_int @@ List.length args)
+                          ^ " in struct initialization in expression '"
+                          ^ (Parsetree.show_expr expr) ^ "'")
+              else eval_expr_type symtab_stack
+                     (Parsetree.StructInit (Parsetree.TypeAlias t, args))
+           | StructLabeled (_, l) ->
+              if List.length args <> List.length l
+              then Error ("Error: Incorrect number of members, expected "
+                          ^ (string_of_int @@ List.length l) ^ " but found "
+                          ^ (string_of_int @@ List.length args)
+                          ^ " in struct initialization in expression '"
+                          ^ (Parsetree.show_expr expr) ^ "'")
+              else eval_expr_type symtab_stack
+                     (Parsetree.StructInit (Parsetree.TypeAlias t, args))
+           | _ ->
+              if List.length args <> 1
+              then Error ("Error: Invalid type cast in expression '"
+                          ^ (Parsetree.show_expr expr) ^ "'")
+              else eval_expr_type symtab_stack
+                     (Parsetree.TypeCast (Parsetree.TypeAlias t, List.hd args))
+           end
+        | _ -> Error e
+        end
      end
+
   | Parsetree.BinOp (a, op, b) ->
      let* a_type = eval_expr_type symtab_stack a in
      let* b_type = eval_expr_type symtab_stack b in
-     let err = Error "Error: Incorrect types for binary operation" in
+     let err =
+       Error ("Error: Incorrect types '"
+              ^ (show_silktype a_type) ^ "', '" ^ (show_silktype b_type)
+              ^ "' for binary operation in expression '"
+              ^ (Parsetree.show_expr expr) ^ "'")
+     in
      begin match op with
      | Plus | Minus ->
         begin match (a_type, b_type) with
@@ -368,9 +519,13 @@ let rec eval_expr_type symtab_stack expr =
         | _ -> err
         end
      end
-  | Parsetree.UnOp (op, expr) ->
-     let* t = eval_expr_type symtab_stack expr in
-     let err = Error "Error: Incorrect type for unary operation" in
+  | Parsetree.UnOp (op, uexpr) ->
+     let* t = eval_expr_type symtab_stack uexpr in
+     let err =
+       Error ("Error: Incorrect type '"
+              ^ (show_silktype t) ^ "' for unary operation in expression '"
+              ^ (Parsetree.show_expr expr) ^ "'")
+     in
      begin match op with
      | Parsetree.UMinus | Parsetree.BitNot ->
         begin match t with
@@ -383,12 +538,12 @@ let rec eval_expr_type symtab_stack expr =
         | _ -> err
         end
      | Parsetree.AddressOf ->
-        begin match expr with
+        begin match uexpr with
         | Parsetree.Identifier name ->
            let v = find_symtab_stack name symtab_stack in
            begin match v with
-           | Some (Value (Var, _, _)) -> Ok (MutPointer t)
-           | Some (Value (Val, _, _)) -> Ok (Pointer t)
+           | Some (Value (false, _, _)) -> Ok (MutPointer t)
+           | Some (Value (true, _, _)) -> Ok (Pointer t)
            | _ -> err
            end
         | Parsetree.UnOp (Parsetree.Deref, exp) -> eval_expr_type symtab_stack exp
@@ -399,7 +554,9 @@ let rec eval_expr_type symtab_stack expr =
           | Parsetree.StructMemberAccess (exp, _) ->
            let+ mut = check_mutable exp in
            if mut then MutPointer t else Pointer t
-        | _ -> Error "Error: Cannot get address of temporary value"
+        | _ -> Error ("Error: Cannot get address of temporary value '"
+                      ^ (Parsetree.show_expr uexpr) ^ "' in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
         end
      | Parsetree.Deref ->
         begin match t with
@@ -423,35 +580,55 @@ let rec eval_expr_type symtab_stack expr =
        | Struct (_, ts) ->
           if List.length ts = List.length exprs
           then Ok ts
-          else Error "Error: Incorrect number of members in struct initialization"
+          else Error ("Error: Incorrect number of members, expected "
+                      ^ (string_of_int @@ List.length ts) ^ " but found "
+                      ^ (string_of_int @@ List.length exprs)
+                      ^ " in struct initialization in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
        | StructLabeled (_, pairs) ->
           if List.length pairs = List.length exprs
           then Ok ((fun (_, s) -> s) @@ List.split pairs)
-          else Error "Error: Incorrect number of members in struct initialization"
-       | _ -> Error "Error: Non-struct type"
+          else Error ("Error: Incorrect number of members, expected "
+                      ^ (string_of_int @@ List.length pairs) ^ " but found "
+                      ^ (string_of_int @@ List.length exprs)
+                      ^ " in struct initialization in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
+       | _ -> Error ("Error: Cannot initialize non-struct type '"
+                     ^ (show_silktype resolved_type) ^ "' in expression '"
+                     ^ (Parsetree.show_expr expr) ^ "'")
      in
      let add_member acc (e, t) =
        let* et = eval_expr_type symtab_stack e in
        if compare_types et t then Ok ()
-       else Error "Error: Mismatched types in struct initialization"
+       else Error ("Error: Mismatched types '"
+                   ^ (show_silktype et) ^ "' and '" ^ (show_silktype t)
+                   ^ "' in struct initialization in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
      in
      let+ () = Util.flb add_member () (List.combine exprs member_types) in
      t
 
-  | Parsetree.ArrayElems [] -> Error "Error: Empty array initializer"
+  | Parsetree.ArrayElems [] ->
+     Error ("Error: Empty array initializer in expression '"
+            ^ (Parsetree.show_expr expr) ^ "'")
   | Parsetree.ArrayElems (head :: tail) ->
      let check_elem acc elem =
        let* elem_type = eval_expr_type symtab_stack elem in
        if compare_types acc elem_type then Ok elem_type
-       else Error "Error: Mismatched types in array initializer"
+       else Error ("Error: Mismatched types '"
+                   ^ (show_silktype acc) ^ "' and '" ^ (show_silktype elem_type)
+                   ^ "' in array initializer in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
      in
      let* head_type = eval_expr_type symtab_stack head in
      let+ elem_type = Util.flb check_elem head_type tail in
      Array (List.length (head :: tail), elem_type)
   | Parsetree.ArrayInit (t, len) ->
      let* t = silktype_of_asttype symtab_stack t in
-     if len < 0 then Error "Error: Negative array length"
+     if len < 0 then Error ("Error: Negative array length in expression '"
+                            ^ (Parsetree.show_expr expr) ^ "'")
      else Ok (Array (len, t))
+
   | Parsetree.Index (array, idx) ->
      let* array_type = eval_expr_type symtab_stack array in
      let* idx_type = eval_expr_type symtab_stack idx in
@@ -461,31 +638,49 @@ let rec eval_expr_type symtab_stack expr =
         let* resolved_type = resolve_type_alias symtab_stack array_type in
         begin match resolved_type with
         | Array (_, elem_type) -> Ok elem_type
-        | _ -> Error "Error: Cannot index non-array type"
+        | _ -> Error ("Error: Cannot index non-array type '"
+                      ^ (show_silktype resolved_type) ^ "' in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
         end
-     | _ -> Error "Error: Array index must be integer type"
+     | _ -> Error ("Error: Array index must be integer type, found '"
+                   ^ (show_silktype resolved_type) ^ "' in expression '"
+                   ^ (Parsetree.show_expr expr) ^ "'")
      end
   | Parsetree.StructMemberAccess (exp, name) ->
      let* t = eval_expr_type symtab_stack exp in
      let* resolved_type = resolve_type_alias symtab_stack t in
      let* members = match resolved_type with
        | StructLabeled (_, l) -> Ok l
-       | _ -> Error "Error: Cannot access member of non-labeledstruct type"
+       | _ -> Error ("Error: Cannot access member '" ^ name
+                     ^ "' of non-labeledstruct type '" ^ (show_silktype t)
+                     ^ "' in expression '" ^ (Parsetree.show_expr expr) ^ "'")
      in
      begin match List.assoc_opt name members with
      | Some t -> Ok t
-     | None -> Error ("Error: Struct has no member named " ^ name)
+     | None -> Error ("Error: Struct of type '" ^ (show_silktype t)
+                      ^ "' has no member named '" ^ name ^ "' in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
      end
   | Parsetree.StructIndexAccess (exp, idx) ->
      let* t = eval_expr_type symtab_stack exp in
      let* resolved_type = resolve_type_alias symtab_stack t in
      let* members = match resolved_type with
        | Struct (_, l) -> Ok l
-       | _ -> Error "Error: Cannot access member of non-unlabeledstruct type"
+       | _ -> Error ("Error: Cannot access member " ^ (string_of_int idx)
+                     ^ " of non-labeledstruct type '" ^ (show_silktype t)
+                     ^ "' in expression '" ^ (Parsetree.show_expr expr) ^ "'")
      in
      match List.nth_opt members idx with
      | Some t -> Ok t
-     | None -> Error ("Error: Struct has no member at index " ^ (string_of_int idx))
+     | None -> Error ("Error: Struct of type '" ^ (show_silktype t)
+                      ^ "' has no member at index " ^ (string_of_int idx)
+                      ^ " in expression '" ^ (Parsetree.show_expr expr) ^ "'")
+
+
+(*
+ * trav_valdecl traverses a top-level value declaration (val or var) in the AST
+ * and adds the appropriate entries to the symbol table.
+ *)
 
 let trav_valdecl symtab symtab_stack vd =
   let check_inferred_type mut ident expr =
@@ -509,19 +704,20 @@ let trav_valdecl symtab symtab_stack vd =
   in
 
   match vd with
-  | Parsetree.ValI (ident, expr) -> check_inferred_type Val ident expr
+  | Parsetree.ValI (ident, expr) -> check_inferred_type true ident expr
   | Parsetree.Val (ident, asttype, expr) ->
-     check_declared_type Val ident asttype expr
-  | Parsetree.VarI (ident, expr) -> check_inferred_type Var ident expr
+     check_declared_type true ident asttype expr
+  | Parsetree.VarI (ident, expr) -> check_inferred_type false ident expr
   | Parsetree.Var (ident, asttype, expr) ->
-     check_declared_type Var ident asttype expr
+     check_declared_type false ident asttype expr
 
 
 let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
   let addblk block_number symtab new_base blk =
-    let new_symtab st = SymtabM.add (string_of_int block_number)
-                          (Value (Val, Void, Some st))
-                          symtab
+    let new_symtab st =
+      SymtabM.add (string_of_int block_number)
+        (Value (true, Void, Some st))
+        symtab
     in
     let+ st =
       construct_block_symtab
@@ -610,14 +806,14 @@ let construct_symtab ast =
   let trav_funcdecl symtab (ident, arglist, ret_asttype) =
     let fwd_decl_value = SymtabM.find_opt ident symtab in
     match fwd_decl_value with
-    | (Some (Value (Val, Function (_, _), None))) | None ->
+    | (Some (Value (true, Function (_, _), None))) | None ->
        let define_arg acc argtuple =
          let (new_symtab, argtypes) = acc in
          let (name, asttype) = argtuple in
          let* argtype = silktype_of_asttype [symtab] asttype in
          begin match SymtabM.find_opt name new_symtab with
          | Some _ -> Error ("Error: Duplicate argument " ^ name)
-         | None -> Ok (SymtabM.add name (Value (Val, argtype, None)) new_symtab,
+         | None -> Ok (SymtabM.add name (Value (true, argtype, None)) new_symtab,
                        argtype :: argtypes)
          end
        in
@@ -628,7 +824,7 @@ let construct_symtab ast =
        let* rettype = silktype_of_asttype [symtab] ret_asttype in
        let func_t = Function (argtypes, rettype) in
        begin match fwd_decl_value with
-       | Some (Value (Val, fwd_decl_t, None)) ->
+       | Some (Value (true, fwd_decl_t, None)) ->
           if compare_types [symtab] fwd_decl_t func_t then
             Ok (new_symtab, func_t)
           else Error ("Error: Types of " ^ ident ^ " do not match")
@@ -658,18 +854,18 @@ let construct_symtab ast =
        in
        begin match body with
        | Parsetree.Block blk ->
-          let nst = SymtabM.add ident (Value (Val, ft, None)) symtab in
+          let nst = SymtabM.add ident (Value (true, ft, None)) symtab in
           let rt = match ft with
             | Function (_, rt) -> rt
             | _ -> Void
           in
           let+ st = construct_block_symtab new_symtab [nst] rt blk in
-          SymtabM.add ident (Value (Val, ft, Some st)) symtab
+          SymtabM.add ident (Value (true, ft, Some st)) symtab
        | _ -> Error "Error: Not a block"
        end
     | Parsetree.FuncFwdDecl (ident, arglist, ret_asttype, _) ->
        let+ (_, ft) = trav_funcdecl symtab (ident, arglist, ret_asttype) in
-       SymtabM.add ident (Value (Val, ft, None)) symtab
+       SymtabM.add ident (Value (true, ft, None)) symtab
 
     | _ -> Ok symtab
   in

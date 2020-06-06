@@ -16,6 +16,6 @@ let _ =
        let code = Result.bind ir_tree Codegen.serialize_irt in
        match code with
        | Ok s -> print_string s
-       | Error e -> prerr_string e
+       | Error e -> prerr_string (e ^ "\n")
   with
   | Lexer.SyntaxError s -> prerr_string ("Syntax Error "  ^ s ^ "\n")

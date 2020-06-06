@@ -10,42 +10,8 @@ module TemplateM = Map.Make(String)
 let ( let* ) x f = Result.bind x f
 let ( let+ ) x f = Result.map f x
 
-let rec serialize_type t = match t with
-  | I8  -> "i8"
-  | I16 -> "i16"
-  | I32 -> "i32"
-  | I64 -> "i64"
-  | U8  -> "u8"
-  | U16 -> "u16"
-  | U32 -> "u32"
-  | U64 -> "u64"
-  | F32 -> "f32"
-  | F64 -> "f64"
-  | Void -> "void"
-  | Bool -> "bool"
-  | TypeAlias name -> name
-  | Template name -> name
-  | Function (ats, rt) ->
-     "func(" ^
-       (String.concat "," @@ List.map serialize_type ats)
-       ^ ")" ^ (serialize_type rt)
-  | Pointer t -> "*" ^ (serialize_type t)
-  | MutPointer t -> "mut*" ^ (serialize_type t)
-  | Array (i, t) -> "[" ^ (string_of_int i) ^ "]" ^ (serialize_type t)
-  | Struct (packed, ts) ->
-     let prefix = if packed then "(:" else "(" in
-     let suffix = if packed then ":)" else ")" in
-     prefix ^ (String.concat "," @@ List.map serialize_type ts) ^ suffix
-  | StructLabeled (packed, pairs) ->
-     let prefix = if packed then "(:" else "(" in
-     let suffix = if packed then ":)" else ")" in
-     let serialize_pair (n, t) = n ^ "|" ^ (serialize_type t) in
-     prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
-  | AliasTemplateInstance (name, ts) ->
-     name ^ "<" ^ (String.concat "," @@ List.map serialize_type ts) ^ ">"
-
 let serialize_instance name types =
-  serialize_type @@ AliasTemplateInstance (name, types)
+  show_type @@ AliasTemplateInstance (name, types)
 
 let add_object f (decls, os) o =
   let+ (decls, o) = f decls o in
