@@ -47,8 +47,8 @@ let rec show_silktype st = match st with
  *     3: an optional 'child' symbol table (symbol SymtabM.t option)
  *
  * The third property is used to store the local symbol tables of functions
- * and blocks. This makes the symbol table of the entire program a tree of sorts;
- * the root only has top-level types and declarations, and each function value
+ * and blocks. This makes the symbol table of the entire program a tree;
+ * the root only has top-level types and declarations, and each function/block
  * has a child symbol table containing its local symbols.
  *)
 
@@ -363,7 +363,7 @@ let rec eval_expr_type symtab_stack expr =
           let+ lvals = List.fold_left2 add_lval (Ok expected_type) exprs valtypes in
           expected_type
        | _ ->
-          (* checking every other type of lvalue is a simple type comparison
+          (* Checking every other type of lvalue is a simple type comparison
              and mutability check. *)
           let* (err1, err2) = match lval with
             | Parsetree.Identifier (n) ->
@@ -393,11 +393,13 @@ let rec eval_expr_type symtab_stack expr =
      in
      check_lval lval exprtype
 
-  | Parsetree.TypeCast (t, expr) ->
-     let* expr_t = eval_expr_type symtab_stack expr in
+  | Parsetree.TypeCast (t, exp) ->
+     let* expr_t = eval_expr_type symtab_stack exp in
      let* cast_t = silktype_of_asttype symtab_stack t in
-     let+ () = check_valid_cast cast_t expr_t in
-     cast_t
+     begin match check_valid_cast cast_t expr_t with
+     | Ok () -> Ok cast_t
+     | Error e -> Error (e ^ " in expression '" ^ (Parsetree.show_expr expr) ^ "'")
+     end
 
   | Parsetree.FunctionCall (f, args) ->
      (* function calls have to be treated specially because of the limitations
@@ -405,7 +407,7 @@ let rec eval_expr_type symtab_stack expr =
         are parsed as function calls. *)
 
      (* match_args matches a list of expressions with a list of (argument) types.
-        it allows mutable pointers to be promoted to immutable pointers *)
+        It allows mutable pointers to be promoted to immutable pointers *)
      let match_arg_types argtypes exprs =
        let match_types acc t exp =
          let* _ = acc in
@@ -685,7 +687,9 @@ let rec eval_expr_type symtab_stack expr =
 let trav_valdecl symtab symtab_stack vd =
   let check_inferred_type mut ident expr =
     match SymtabM.find_opt ident symtab with
-    | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+    | Some _ -> Error ("Error: Symbol '" ^ ident
+                       ^ "' already defined in declaration '"
+                       ^ (Parsetree.show_decl vd) ^ "'")
     | None ->
        let+ stype = eval_expr_type (symtab :: symtab_stack) expr in
        SymtabM.add ident (Value (mut, stype, None)) symtab
@@ -693,14 +697,18 @@ let trav_valdecl symtab symtab_stack vd =
 
   let check_declared_type mut ident asttype expr =
     match SymtabM.find_opt ident symtab with
-    | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+    | Some _ -> Error ("Error: Symbol '" ^ ident
+                       ^ "' already defined in declaration '"
+                       ^ (Parsetree.show_decl vd) ^ "'")
     | None ->
        let* lstype = silktype_of_asttype (symtab :: symtab_stack) asttype in
        let* rstype = eval_expr_type (symtab :: symtab_stack) expr in
        if compare_types (symtab :: symtab_stack) lstype rstype then
          Ok (SymtabM.add ident (Value (mut, lstype, None)) symtab)
        else
-         Error ("Error: mismatched types in declaration of " ^ ident)
+         Error ("Error: Mismatched types '"
+                ^ (show_silktype lstype) ^ "' and '" ^ (show_silktype rstype)
+                ^ "' in declaration '" ^ (Parsetree.show_decl vd) ^ "'")
   in
 
   match vd with
@@ -712,7 +720,29 @@ let trav_valdecl symtab symtab_stack vd =
      check_declared_type false ident asttype expr
 
 
+(*
+ * construct_block_symtab constructs the local symbol table of a block.
+ *
+ * Every block within a function/block is assigned an index: the first block
+ * is 0, the second block is 1, and so on. Each block's local symbol table is
+ * stored in the parent's symbol table using the block's index as the key.
+ *
+ * For example, the following function:
+ *     func main() void {
+ *         var a = 1; val baz = "asdf";
+ *         { var b = 2; var c = 3; }
+ *         { var d = 3; var g = 17; }
+ *     }
+ * Would have a symbol table with the following entries:
+ *     a:   Value (false, i32, None)
+ *     baz: Value (true, *i8, None)
+ *     0:   Value (true, void, Some <symbol table of block 0>)
+ *     1:   Value (true, void, Some <symbol table of block 1>)
+ *)
+
 let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
+  (* addblk adds a block symbol table (new_base) to the parent
+     symbol table (symtab) *)
   let addblk block_number symtab new_base blk =
     let new_symtab st =
       SymtabM.add (string_of_int block_number)
@@ -726,6 +756,8 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
     (block_number + 1, new_symtab st)
   in
 
+  (* trav_stmt traverses a statement in the current block, adding entries
+     to the symbol table as necessary *)
   let trav_stmt acc stmt =
     let (block_number, symtab) = acc in
     match stmt with
@@ -736,6 +768,7 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
     | Parsetree.Expr exp ->
        let+ _ = eval_expr_type (symtab :: symtab_stack) exp in
        (block_number, symtab)
+
     | Parsetree.Block blk -> addblk block_number symtab SymtabM.empty blk
     | Parsetree.IfElse (exp, ifstmt, elsestmt) ->
        begin match ifstmt with
@@ -749,12 +782,18 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
                 let* (b, s) = ifresult in
                 addblk b s SymtabM.empty elseblk
              | Parsetree.Empty -> ifresult
-             | _ -> Error "Error: Not a block"
+             | _ -> Error ("Error: Else statement is not a block, found '"
+                           ^ (Parsetree.show_stmt elsestmt) ^ "' in statement '"
+                           ^ (Parsetree.show_stmt stmt) ^ "'")
              end
-          | _ -> Error "Error: Expected boolean expression in 'if' condition"
-
+          | _ ->
+             Error ("Error: Expected boolean expression in 'if' statement, found '"
+                    ^ (Parsetree.show_expr exp) ^ "' in statement '"
+                    ^ (Parsetree.show_stmt stmt) ^ "'")
           end
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: If statement is not a block, found '"
+                     ^ (Parsetree.show_stmt ifstmt) ^ "' in statement '"
+                     ^ (Parsetree.show_stmt stmt) ^ "'")
        end
     | Parsetree.While (exp, whilestmt) ->
        begin match whilestmt with
@@ -762,10 +801,14 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
           let* expr_t = eval_expr_type (symtab :: symtab_stack) exp in
           begin match expr_t with
           | Bool -> addblk block_number symtab SymtabM.empty blk
-          | _ -> Error "Error: Expected boolean expression in 'while' condition"
-
+          | _ ->
+             Error ("Error: Expected boolean expression in 'while' statement, found '"
+                    ^ (Parsetree.show_expr exp) ^ "' in statement '"
+                    ^ (Parsetree.show_stmt stmt) ^ "'")
           end
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: While statement is not a block, found '"
+                     ^ (Parsetree.show_stmt whilestmt) ^ "' in statement '"
+                     ^ (Parsetree.show_stmt stmt) ^ "'")
        end
     | Parsetree.For (vd, condexp, incexp, forblk) ->
        begin match forblk with
@@ -782,37 +825,61 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
           begin match condexp_t with
           | Bool -> addblk block_number symtab local_symtab blk
           | _ ->
-             Error "Error: Expected boolean expression in 'for' condition"
+             Error ("Error: Expected boolean expression in 'for' statement, found '"
+                    ^ (Parsetree.show_expr condexp) ^ "' in statement '"
+                    ^ (Parsetree.show_stmt stmt) ^ "'")
           end
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: For statement is not a block, found '"
+                     ^ (Parsetree.show_stmt forblk) ^ "' in statement '"
+                     ^ (Parsetree.show_stmt stmt) ^ "'")
        end
+
     | Parsetree.Return exo ->
        begin match exo with
        | Some exp ->
           let* ext = eval_expr_type (symtab :: symtab_stack) exp in
           if compare_types symtab_stack rettype ext then
             Ok (block_number, symtab)
-          else Error "Error: Incorrect return type"
+          else
+            Error ("Error: Incorrect return type, expected '"
+                   ^ (show_silktype rettype) ^ "' but found '" ^ (show_silktype ext)
+                   ^ "' in expression '" ^ (Parsetree.show_expr exp)
+                   ^ "' in statement '" ^ (Parsetree.show_stmt stmt) ^ "'")
        | None ->
           if compare_types symtab_stack rettype Void then
             Ok (block_number, symtab)
-          else Error "Error: Incorrect return type"
+          else
+            Error ("Error: Incorrect return type, expected '"
+                   ^ (show_silktype rettype) ^ "' but found '" ^ (show_silktype Void)
+                   ^ "' in statement '" ^ (Parsetree.show_stmt stmt) ^ "'")
        end
     | Parsetree.Continue | Parsetree.Break -> Ok (block_number, symtab)
   in
   let+ (_, s) = Util.flb trav_stmt (0, base_symtab) stmts in s
 
+
+(*
+ * construct_symtab constructs the symbol table of the entire program starting from
+ * the top-level declarations.
+ *)
+
 let construct_symtab ast =
+  (* trav_funcdecl traverses a function declaration and adds it (along with its
+     local symbol table) to the symbol table *)
   let trav_funcdecl symtab (ident, arglist, ret_asttype) =
+    (* We have to check if this function has already been forward-declared,
+       and whether it matches the type of previous declaration if so. *)
     let fwd_decl_value = SymtabM.find_opt ident symtab in
     match fwd_decl_value with
     | (Some (Value (true, Function (_, _), None))) | None ->
+       (* define_arg adds the function's arguments to its local symbol table *)
        let define_arg acc argtuple =
          let (new_symtab, argtypes) = acc in
          let (name, asttype) = argtuple in
          let* argtype = silktype_of_asttype [symtab] asttype in
          begin match SymtabM.find_opt name new_symtab with
-         | Some _ -> Error ("Error: Duplicate argument " ^ name)
+         | Some _ -> Error ("Error: Duplicate argument '" ^ name
+                            ^ "' in declaration of '" ^ ident ^ "'")
          | None -> Ok (SymtabM.add name (Value (true, argtype, None)) new_symtab,
                        argtype :: argtypes)
          end
@@ -823,29 +890,38 @@ let construct_symtab ast =
        let argtypes = List.rev argtypes_r in
        let* rettype = silktype_of_asttype [symtab] ret_asttype in
        let func_t = Function (argtypes, rettype) in
+
+       (* Now we compare types of the previous declaration and the current one. *)
        begin match fwd_decl_value with
        | Some (Value (true, fwd_decl_t, None)) ->
           if compare_types [symtab] fwd_decl_t func_t then
             Ok (new_symtab, func_t)
-          else Error ("Error: Types of " ^ ident ^ " do not match")
+          else Error ("Error: Types of '" ^ ident ^ "' do not match, found '"
+                      ^ (show_silktype fwd_decl_t) ^ "' and '"
+                      ^ (show_silktype func_t) ^ "'")
        | None -> Ok (new_symtab, func_t)
-       | _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+       | _ -> Error ("Error: Symbol '" ^ ident ^ "' already defined")
        end
-    | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+
+    | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' already defined")
   in
 
+  (* trav_ast traverses a single top-level declaration and adds entries to the
+     symbol table *)
   let trav_ast symtab decl = match decl with
     | Parsetree.TypeDef (ident, basetype) ->
        begin match SymtabM.find_opt ident symtab with
        | None | Some (Type (TypeStub _)) ->
           let+ t = silktype_of_asttype [symtab] basetype in
           SymtabM.add ident (Type t) symtab
-       | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration '"
+                          ^ (Parsetree.show_top_decl decl) ^ "' already defined")
        end
     | Parsetree.TypeFwdDef ident ->
        begin match SymtabM.find_opt ident symtab with
        | None -> Ok (SymtabM.add ident (Type (TypeStub ident)) symtab)
-       | Some _ -> Error ("Error: Symbol " ^ ident ^ " already defined")
+       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration '"
+                          ^ (Parsetree.show_top_decl decl) ^ "' already defined")
        end
     | Parsetree.ValDecl (_, vd) -> trav_valdecl symtab [] vd
     | Parsetree.FuncDecl (_, (ident, arglist, ret_asttype, body)) ->
@@ -861,7 +937,8 @@ let construct_symtab ast =
           in
           let+ st = construct_block_symtab new_symtab [nst] rt blk in
           SymtabM.add ident (Value (true, ft, Some st)) symtab
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: Function body of '" ^ ident ^ "' is not a block, found '"
+                     ^ (Parsetree.show_stmt body) ^ "'")
        end
     | Parsetree.FuncFwdDecl (ident, arglist, ret_asttype, _) ->
        let+ (_, ft) = trav_funcdecl symtab (ident, arglist, ret_asttype) in
