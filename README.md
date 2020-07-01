@@ -340,6 +340,7 @@ In order to build Silk, you will need:
 - [ocaml](https://ocaml.org/) toolchain
 - [dune](https://dune.build/) build tool
 - [menhir](http://gallium.inria.fr/~fpottier/menhir/) parser generator
+- [nice-parser](https://github.com/smolkaj/nice-parser) library
 
 Then simply acquire the [source code](https://github.com/AjayMT/silk)
 and `./build.sh`.
