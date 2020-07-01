@@ -1,7 +1,9 @@
 
-(menhir (modules parser))
-(ocamllex lexer)
+(menhir (modules menhir_parser))
+(ocamllex ocamllex_lexer)
+
 (executable
  (name silk)
- (modules lexer parser util parsetree template symtab codegen silk)
+ (modules util ocamllex_lexer menhir_parser parsetree template symtab codegen silk)
+ (libraries nice_parser)
  (preprocess future_syntax))

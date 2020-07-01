@@ -1,7 +1,7 @@
 
 {
-open Parser
-exception SyntaxError of string
+open Menhir_parser
+exception LexError of string
 
 let char_of_string s = (Scanf.unescaped s).[0]
 }
@@ -12,6 +12,7 @@ let octalDigit = ['0'-'7']
 let leadingChar = ['a'-'z' 'A'-'Z']
 let nonleadingChar = ['a'-'z' 'A'-'Z' '_' '0'-'9']
 let whitespace = [' ' '\t']
+let newline = "\r\n" | '\r' | '\n'
 let escapeSequence = ('\\' (['\'' '"' '?' '\\' 'a' 'b' 'f' 'n' 'r' 't' 'v'] | ['0'-'7']['0'-'7']?['0'-'7']? | 'x'['a'-'f' 'A'-'F' '0'-'9']+))
 
 rule token = parse
@@ -77,7 +78,7 @@ I8_LITERAL (int_of_string
 I8_LITERAL (int_of_string
 (String.sub i8_literal 0 ((String.length i8_literal) - 1)))
 }
-| "'" ([^ '\'' '\\' '\n'] | escapeSequence)+ "'" as i8_literal {
+| "'" ([^ '\'' '\\' '\r' '\n'] | escapeSequence)+ "'" as i8_literal {
 I8_LITERAL (int_of_char @@
 char_of_string @@
 String.sub i8_literal 1 @@
@@ -186,7 +187,7 @@ U64_LITERAL (int_of_string
 (String.sub u64_literal 0 ((String.length u64_literal) - 2)))
 }
 
-| "\"" ([^ '"' '\\' '\n'] | escapeSequence)* "\"" as string_literal {
+| "\"" ([^ '"' '\\' '\r' '\n'] | escapeSequence)* "\"" as string_literal {
 STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
 (String.length string_literal) - 2)
 }
@@ -233,9 +234,9 @@ STRING_LITERAL (Scanf.unescaped @@ String.sub string_literal 1 @@
 | "}"         { RCURLY }
 | "["         { LBRACKET }
 | "]"         { RBRACKET }
-| "//" [^ '\n']* '\n' { token lexbuf }
-| "#"  [^ '\n']* '\n' { token lexbuf }
+| "//" [^ '\r' '\n']* newline { Lexing.new_line lexbuf; token lexbuf }
+| "#"  [^ '\r' '\n']* newline { Lexing.new_line lexbuf; token lexbuf }
 | whitespace+ { token lexbuf }
-| '\n'        { token lexbuf }
+| newline     { Lexing.new_line lexbuf; token lexbuf }
 | eof         { EOF }
-| _           { raise (SyntaxError (string_of_int lexbuf.lex_curr_pos)) }
+| _           { raise (LexError (string_of_int lexbuf.lex_curr_pos)) }

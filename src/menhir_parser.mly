@@ -1,5 +1,5 @@
 
-// parser.mly
+// menhir_parser.mly
 
 %{ open Parsetree %}
 
@@ -162,8 +162,6 @@ block_body: _block_body   { List.rev $1 }
 _block_body: statement    { [$1] }
   | _block_body statement { $2 :: $1 }
 ;
-
-// == TODO ==
 
 type_: base_type { $1 }
   | pointer_type { $1 }
