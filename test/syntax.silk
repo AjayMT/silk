@@ -1,0 +1,5 @@
+type t:<$t> = struct($t);
+
+func main() void {
+  var a = t:<t:<i32>>(t:<i32>(1));
+}

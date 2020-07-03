@@ -1,5 +1,5 @@
 
-(*
+(**
  * Parse tree definitions.
  *)
 
@@ -70,7 +70,7 @@ type top_decl = TypeDef of type_def
               | TemplateFuncFwdDecl of (string list * func_fwd_decl)
 
 
-(*
+(**
  * show_x: Format x as string for template instantiation and error messages.
  *)
 
@@ -106,7 +106,7 @@ let rec show_type t = match t with
      let serialize_pair (n, t) = n ^ "|" ^ (show_type t) in
      prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
   | AliasTemplateInstance (name, ts) ->
-     name ^ "<" ^ (String.concat "," @@ List.map show_type ts) ^ ">"
+     name ^ ":<" ^ (String.concat "," @@ List.map show_type ts) ^ ">"
 
 
 let rec show_expr e = match e with
@@ -166,11 +166,11 @@ let rec show_stmt s =
   | Expr e -> (show_expr e) ^ ";"
   | Block stmts -> "{\n" ^ (String.concat "\n" @@ List.map show_stmt stmts) ^ "\n}"
   | IfElse (e, ifs, elses) ->
-     "if (" ^ (show_expr e) ^ ") " ^ (show_stmt ifs) ^ " else " ^ (show_stmt elses)
-  | While (e, stmts) -> "while (" ^ (show_expr e) ^ ") " ^ (show_stmt stmts)
+     "if " ^ (show_expr e) ^ " " ^ (show_stmt ifs) ^ " else " ^ (show_stmt elses)
+  | While (e, stmts) -> "while " ^ (show_expr e) ^ " " ^ (show_stmt stmts)
   | For (vd, e1, e2, s) ->
-     "for (" ^ (show_decl vd) ^ "; " ^ (show_expr e1) ^ "; " ^ (show_expr e2)
-     ^ ") " ^ (show_stmt s)
+     "for " ^ (show_decl vd) ^ "; " ^ (show_expr e1) ^ "; " ^ (show_expr e2)
+     ^ " " ^ (show_stmt s)
   | Continue -> "continue;" | Break -> "break;"
   | Return e ->
      let e_str = match e with
@@ -181,7 +181,7 @@ let rec show_stmt s =
 
 
 let rec show_top_decl td =
-  let templatize_name n ts = n ^ "<" ^ (String.concat ", " ts) ^ ">" in
+  let templatize_name n ts = n ^ ":<" ^ (String.concat ", " ts) ^ ">" in
   let show_args args =
     let show_arg (name, t) = name ^ " " ^ (show_type t) in
     String.concat ", " @@ List.map show_arg args

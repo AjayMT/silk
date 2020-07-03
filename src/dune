@@ -4,6 +4,7 @@
 
 (executable
  (name silk)
+ (public_name silk)
  (modules util ocamllex_lexer menhir_parser parsetree template symtab codegen silk)
  (libraries nice_parser)
  (preprocess future_syntax))

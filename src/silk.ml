@@ -1,5 +1,5 @@
 
-(*
+(**
  * CLI and compiler driver.
  *)
 
@@ -42,7 +42,32 @@ let _ =
     in
     match compile f with
     | Ok out -> outf out
-    | Error err -> prerr_string err
+    | Error err ->
+       let no_color = Sys.getenv_opt "NO_COLOR" in
+       let prefix =
+         if Option.is_some no_color then "[compiler]"
+         else "\027[1;36m[compiler]\027[0m"
+       in
+       let suffix = match f with
+         | Some f -> "in file '" ^ f ^ "'"
+         | None -> "in input"
+       in
+       let err =
+         if Option.is_some no_color then err
+         else
+           let l = String.length "Error" in
+           "\027[1;31mError\027[0m" ^ (String.sub err l ((String.length err) - l))
+       in
+       let err = String.split_on_char '\n' err in
+
+       Format.set_formatter_out_channel stderr;
+       Format.open_box 0;
+       Format.print_string prefix; Format.force_newline (); Format.force_newline ();
+       Format.open_box 2;
+       List.iter (fun s -> Format.print_string s; Format.force_newline ()) err;
+       Format.close_box (); Format.print_newline ();
+       Format.print_string suffix; Format.print_newline ();
+       Format.close_box ();
   in
 
   let usage_msg =

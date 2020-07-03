@@ -25,7 +25,7 @@ let assoc2 key l =
     let (k, v) = pair in
     let v = if k = key then Some v else None in
     match found with
-    | (Some a, Some b) -> found
+    | (Some _, Some _) -> found
     | (Some a, None) -> (Some a, v)
     | (None, _) -> (v, None)
   in

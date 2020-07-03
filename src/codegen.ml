@@ -1,9 +1,29 @@
 
-(*
+(**
  * LLVM Code generation.
  *)
 
 module ScopeM = Map.Make(String)
+
+(**
+ * LLVM code generation is performed in two stages:
+ *   1. Conversion of the AST + symbol table into an "IR" (intermediate
+ *      representation) tree
+ *   2. Conversion of the IR tree into a list of llvm_insts (instructions)
+ *      which are serialized into LLVM code.
+ *
+ * The IR tree (IRT) is structurally similar to the AST but includes all type
+ * information needed to produce LLVM instructions. In constructing the IRT,
+ * we unify the AST and symbol table data structures, remove extraneous
+ * information (distinction between mutable and immutable pointers, labeled
+ * and unlabeled structs, etc.) and simplify some expressions (boolean binops,
+ * type casts and others).
+ *
+ * The IRT is traversed to produce llvm_insts, which generally map directly to
+ * real LLVM instructions. llvm_insts act on llvm_values, which can be literals,
+ * named values or temporaries (also 'undef' and 'zeroinitializer' which are special
+ * literals).
+ *)
 
 type llvm_type = I of int
                | U of int

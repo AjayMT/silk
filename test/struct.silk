@@ -1,16 +1,16 @@
 
-type point = struct(x: i32, y: i32);
+type point = struct(x i32, y i32);
 
-func p(): point {
+func p() point {
   return point(1, 2);
 }
 
 type newtype = struct(u64);
 
-func q(): newtype {
+func q() newtype {
   return newtype(u64(100));
 }
 
-func r(): void {
+func r() void {
   val a = (: 1, 2, 3 :);
 }
