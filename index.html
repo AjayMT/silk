@@ -18,9 +18,16 @@
   <![endif]-->
 </head>
 <body>
+<h1 style="color:#f2983f;font-size:40pt;">
+〈Silk〉
+</h1>
+<p style="padding:10px;border-top:5px solid #f2983f;background-color:#eee;font-size:13pt;">
+<a href="https://github.com/AjayMT/silk">Source Code</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk/issues">Bug Tracker</a> <span style="padding-left:20px"></span> <a href="./syntax.html">Syntax Specification</a>
+</p>
+<br />
+<details>
+<p><summary>Table of Contents</summary></p>
 <nav id="TOC" role="doc-toc">
-<ul>
-<li><a href="#silk">Silk</a>
 <ul>
 <li><a href="#syntax">Syntax</a></li>
 <li><a href="#semantics-and-features">Semantics and features</a>
@@ -34,10 +41,9 @@
 <li><a href="#usage">Usage</a></li>
 <li><a href="#todos-roadmap">TODOs / Roadmap</a></li>
 <li><a href="#license">License</a></li>
-</ul></li>
 </ul>
 </nav>
-<h1 id="silk">Silk</h1>
+</details>
 <p>Silk is a small system programming language that I wrote for fun and clout. It is designed to be as flexible and simple as C, but more pleasant to write. To that end, Silk provides</p>
 <ul>
 <li>nicer syntax</li>
@@ -45,8 +51,7 @@
 <li>a sense of pride and accomplishment</li>
 </ul>
 <p>Silk does not aim to be as safe or fast as C++, Rust, etc. The LLVM backend (you didn’t think I wrote an end-to-end compiler, did you?) does all of the optimization.</p>
-<p>As is true of many of my projects, Silk is currently <strong>alpha</strong>-stage software. Don’t expect it to work well (or at all).</p>
-<p><a href="https://github.com/AjayMT/silk" class="uri">https://github.com/AjayMT/silk</a></p>
+<p>As is true of many of my projects, Silk is currently <strong>alpha</strong>-stage software.</p>
 <h2 id="syntax">Syntax</h2>
 <p>Silk is heavily inspired by <a href="https://golang.org/">Go</a> and other modern programming languages.</p>
 <pre><code>// this is a comment
@@ -280,12 +285,32 @@ func main() i32 {
 <li><a href="https://ocaml.org/">ocaml</a> toolchain</li>
 <li><a href="https://dune.build/">dune</a> build tool</li>
 <li><a href="http://gallium.inria.fr/~fpottier/menhir/">menhir</a> parser generator</li>
+<li><a href="https://github.com/smolkaj/nice-parser">nice-parser</a> library</li>
 </ul>
-<p>Then simply acquire the <a href="https://github.com/AjayMT/silk">source code</a> and <code>./build.sh</code>.</p>
-<p>This will produce a <code>silk.exe</code> executable in the <code>_build/default/src/</code> directory.</p>
+<p>Acquire the <a href="https://github.com/AjayMT/silk">source code</a> and execute:</p>
+<pre><code>$ dune build --profile release @install
+$ dune install</code></pre>
+<p>This will place the <code>silk</code> executable in your opam <code>bin</code> directory.</p>
+<p>Alternatively, simply run <code>build.sh</code> to place the <code>silk</code> executable in the source directory.</p>
 <h2 id="usage">Usage</h2>
 <p>In order to use Silk, you will need the <a href="http://llvm.org/">LLVM</a> toolchain.</p>
-<p>Since I have not written a CLI yet, the <code>silk.exe</code> executable reads Silk from stdin and writes LLVM to stdout. LLVM can be compiled to native object files with the <code>llc</code> tool.</p>
+<p>Running <code>silk --help</code> will print a help message:</p>
+<pre><code>The Silk compiler.
+
+This program compiles one or more silk files (or input read
+from stdin) and writes LLVM to stdout or the specified output
+file.
+
+Visit http://ajaymt.github.io/silk for documentation.
+
+Usage: silk [options] [file...]
+
+Options:
+  -o &lt;file&gt;     Output file [default: stdout]
+  -             Read input from stdin [default: false]
+  --version     Print version number and exit
+  --help        Print this help message and exit</code></pre>
+<p><code>silk</code> reads the specified files (and/or stdin) and compiles them to LLVM. LLVM can be compiled to native object files with the <code>llc</code> tool.</p>
 <p>For example:</p>
 <pre><code>$ cat hello.silk
 extern func printf(s *i8) void;
@@ -294,13 +319,13 @@ func main() i32 {
   printf(&quot;hello, world\n&quot;);
   return 0;
 }
-$ silk &lt; hello.silk &gt; hello.llvm
+$ silk hello.silk -o hello.llvm
 $ llc -filetype=obj hello.llvm -o hello.o
 $ ld -o hello hello.o -lc
 $ ./hello
 hello, world</code></pre>
 <p>The LLVM output can be compiled directly without writing it to a file:</p>
-<pre><code>$ silk &lt; hello.silk | llc -filetype=obj -o hello.o -</code></pre>
+<pre><code>$ silk hello.silk | llc -filetype=obj -o hello.o -</code></pre>
 <p>Silk does not include a preprocessor or package/module system of any kind. Your favorite C compiler can probably produce preprocessor output:</p>
 <pre><code>$ cc -E -x c hello.silk &gt; hello.silk.out
 $ # Compile hello.silk.out as described above</code></pre>
@@ -312,7 +337,6 @@ $ # Compile hello.silk.out as described above</code></pre>
 </ul></li>
 <li>Better type parameter syntax</li>
 <li>Cool optimization stuff</li>
-<li>Make a real CLI</li>
 <li>More docs!</li>
 </ul>
 <h2 id="license">License</h2>
