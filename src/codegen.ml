@@ -15,14 +15,14 @@ module ScopeM = Map.Make(String)
  * The IR tree (IRT) is structurally similar to the AST but includes all type
  * information needed to produce LLVM instructions. In constructing the IRT,
  * we unify the AST and symbol table data structures, remove extraneous
- * information (distinction between mutable and immutable pointers, labeled
- * and unlabeled structs, etc.) and simplify some expressions (boolean binops,
+ * information (distinction between mutable and immutable pointers, array and
+ * struct member access, etc.) and simplify some expressions (boolean binops,
  * type casts and others).
  *
  * The IRT is traversed to produce llvm_insts, which generally map directly to
- * real LLVM instructions. llvm_insts act on llvm_values, which can be literals,
- * named values or temporaries (also 'undef' and 'zeroinitializer' which are special
- * literals).
+ * LLVM instructions. llvm_insts act on llvm_values, which can be literals,
+ * named values or temporaries (also 'undef' and 'zeroinitializer' which are
+ * special literals).
  *)
 
 type llvm_type = I of int
@@ -137,6 +137,15 @@ type llvm_inst = Alloca of llvm_type
 let ( let* ) x f = Result.bind x f
 let ( let+ ) x f = Result.map f x
 
+
+(**
+ * llvm_type_of_silktype converts a silktype (used in the symtab)
+ * to an llvm_type (used in the IRT). It preserves type aliases
+ * and newtypes to allow forward-declaration and because LLVM
+ * treats all anonymous structure types as unique (even if they
+ * are equivalent).
+ *)
+
 let rec llvm_type_of_silktype t =
   match t with
   | Symtab.Function (argtypes, rettype) ->
@@ -168,10 +177,22 @@ let rec llvm_type_of_silktype t =
      StructLabeled (packed, List.combine names types)
   | Symtab.TypeStub n -> OpaqueType ("%" ^ "\"" ^ n ^ "\"", n)
 
+
+(**
+ * discard_labels converts a labeled struct type into an unlabeled
+ * struct type by removing the labels.
+ *)
+
 let discard_labels t = match t with
   | StructLabeled (packed, pairs) ->
      let (_, types) = List.split pairs in Struct (packed, types)
   | _ -> t
+
+
+(**
+ * resolve_alias finds the base type of a type alias or newtype.
+ * When resolving a type stub it searches the symbol table.
+ *)
 
 let rec resolve_alias types_tab_stack t = match t with
   | Alias (t, _) -> resolve_alias types_tab_stack t
@@ -179,9 +200,16 @@ let rec resolve_alias types_tab_stack t = match t with
      begin match Symtab.find_symtab_stack n types_tab_stack with
      | Some (Symtab.Type t) ->
         resolve_alias types_tab_stack (llvm_type_of_silktype t)
-     | _ -> Error ("Error: Failed to resolve type " ^ n ^ " " ^ (string_of_int @@ List.length types_tab_stack))
+     | _ -> Error ("Error: Failed to resolve type '" ^ n ^ "'")
      end
   | _ -> Ok t
+
+
+(**
+ * resolve_literal evaluates a literal (AST) expression or
+ * expression containing only literals. This is used to validate
+ * and simplify top-level declarations.
+ *)
 
 (* TODO binops, other things *)
 let rec resolve_literal l = match l with
@@ -204,9 +232,19 @@ let rec resolve_literal l = match l with
      let* l = resolve_literal l in
      let* r = resolve_literal r in
      Error "unimplemented"
-  | _ -> Error "Error: Could not resolve static value at compile time"
+  | _ -> Error ("Error: Could not evaluate expression '"
+                ^ (Parsetree.show_expr l) ^ "' at compile time")
 
-let get_ir_expr_type types_tab_stack ir_exp = match ir_exp with
+
+(**
+ * eval_ir_expr_type evaluates the type of an IRT expression.
+ * Since IRT nodes carry type information, this is much simpler than
+ * evaluating the type of an AST node (which is done in eval_expr_type
+ * in symtab.ml). The function uses resolve_alias, which requires the
+ * symbol table to resolve type stubs.
+ *)
+
+let eval_ir_expr_type types_tab_stack ir_exp = match ir_exp with
   | Identifier (t, _) -> Ok t
   | ParamIdentifier (t, _) -> Ok t
   | Literal (t, _) -> Ok t
@@ -220,7 +258,7 @@ let get_ir_expr_type types_tab_stack ir_exp = match ir_exp with
   | BinOp (t, o, _, _) ->
      begin match o with
      | Equal | GreaterThan | LessThan -> Ok (I 1)
-     | _ -> Ok t
+     | _ -> Ok t (* all other binops have the same operand and result types *)
      end
   | ItoF (_, _, t) -> Ok t
   | FtoI (_, _, t) -> Ok t
@@ -260,9 +298,25 @@ let get_ir_expr_type types_tab_stack ir_exp = match ir_exp with
         | Pointer s -> Ok s
         | _ -> Error "Error: Cannot dereference non-pointer type"
         end
-     | _ -> Ok t
+     | _ -> Ok t (* uminus and not have the same operand and result types *)
+
+
+(**
+ * construct_ir_tree converts the AST and symbol table into the IRT.
+ * In doing so, it simplifies some expressions and checks for invalid
+ * continue/break statements. It also 'de-scopes ' all symbols.
+ *)
 
 let construct_ir_tree ast symtab =
+
+  (**
+   * The 'scope' of every symbol is the stack of nested symbol tables
+   * that have been traversed to reach that symbol (see comments above
+   * find_symtab_stack in symtab.ml). Symtabs/scopes can be associated
+   * with functions or blocks; function scopes are identified with the
+   * name of the function, block scopes are identified with the 'index'
+   * of the block (see construct_block_symtab in symtab.ml).
+   *)
   let rec find_in_scope scope_stack symtab_stack name =
     match symtab_stack with
     | [] -> ([], [], Symtab.SymtabM.find name symtab)
@@ -281,21 +335,27 @@ let construct_ir_tree ast symtab =
        | None -> find_symtab_stack name zs
   in
 
+
   let rec map_expr scope_map symtab_stack expr =
     let types_tab_stack = symtab_stack @ [symtab] in
     match expr with
     | Parsetree.Identifier name ->
        let symbol = find_symtab_stack name symtab_stack in
        begin match symbol with
-       | Some (Symtab.Type _) -> Error ("Error: Expected value, found type: " ^ name)
+       | Some (Symtab.Type _) ->
+          Error ("Error: Expected value, found type '" ^ name
+                 ^ "' in expression '" ^ (Parsetree.show_expr expr) ^ "'")
        | Some (Symtab.Value (_, type_, _)) ->
           let t = llvm_type_of_silktype type_ in
           Ok (Identifier (t, ScopeM.find name scope_map))
-       | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+       | None -> Error ("Error: Identifier '" ^ name ^ "' undefined in expression '"
+                        ^ (Parsetree.show_expr expr) ^ "'")
        end
+
     | Parsetree.TemplateInstance (name, types) ->
-       Error ("Error: Failed to instantiate template " ^
-                (Template.serialize_instance name types))
+       Error ("Error: Failed to instantiate template in expression '" ^
+                (Parsetree.show_expr expr) ^ "'")
+
     | Parsetree.Literal l ->
        begin match l with
        | Parsetree.LI8  i -> Ok (Literal (I 8, Int i))
@@ -311,20 +371,24 @@ let construct_ir_tree ast symtab =
        | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
        | Parsetree.LString s -> Ok (Literal (Pointer (I 8), String_ s))
        end
+
     | Parsetree.Assignment (lval, exp) ->
        let* rexp = map_expr scope_map symtab_stack exp in
        let rec resolve_assignment lval rexp =
-         let* rexp_type = get_ir_expr_type types_tab_stack rexp in
+         let* rexp_type = eval_ir_expr_type types_tab_stack rexp in
          match lval with
          | Parsetree.Identifier (name) ->
             let symbol = find_symtab_stack name symtab_stack in
             begin match symbol with
             | Some (Symtab.Type _) ->
-               Error ("Error: Expected value, found type: " ^ name)
+               Error ("Error: Expected value, found type '" ^ name
+                      ^ "' in expression '" ^ (Parsetree.show_expr expr) ^ "'")
             | Some (Symtab.Value (_, type_, _)) ->
                let t = llvm_type_of_silktype type_ in
                Ok (Assignment (t, ScopeM.find name scope_map, rexp))
-            | None -> Error ("Error: Identifier " ^ name ^ " undefined")
+            | None ->
+               Error ("Error: Identifier '" ^ name ^ "' undefined in expression '"
+                      ^ (Parsetree.show_expr expr) ^ "'")
             end
          | Parsetree.UnOp (Parsetree.Deref, lexp) ->
             let+ lexp = map_expr scope_map symtab_stack lexp in
@@ -332,8 +396,8 @@ let construct_ir_tree ast symtab =
          | Parsetree.Index (array_expr, idx_expr) ->
             let* array = map_expr scope_map symtab_stack array_expr in
             let* idx = map_expr scope_map symtab_stack idx_expr in
-            let* idx_type = get_ir_expr_type types_tab_stack idx in
-            let+ array_type = get_ir_expr_type types_tab_stack array in
+            let* idx_type = eval_ir_expr_type types_tab_stack idx in
+            let+ array_type = eval_ir_expr_type types_tab_stack array in
             let ptr_exp =
               GetElemPtr (array_type, Pointer array_type,
                           UnOp (array_type, AddressOf, array),
@@ -342,14 +406,18 @@ let construct_ir_tree ast symtab =
             Write (rexp_type, ptr_exp, rexp)
          | Parsetree.StructIndexAccess _ | Parsetree.StructMemberAccess _ ->
             let* lval = map_expr scope_map symtab_stack lval in
-            let+ lval_type = get_ir_expr_type types_tab_stack lval in
+            let+ lval_type = eval_ir_expr_type types_tab_stack lval in
             Write (rexp_type, UnOp (lval_type, AddressOf, lval), rexp)
          | Parsetree.StructLiteral (_, exprs) ->
             let* rexp_type_resolved = resolve_alias types_tab_stack rexp_type in
             let* members = match rexp_type_resolved with
               | Struct (_, l) -> Ok l
               | StructLabeled (_, l) -> Ok ((fun (_, t) -> t) @@ List.split l)
-              | _ -> Error "Error: Mismatched types in struct assignment"
+              | _ -> Error ("Error: Mismatched type of lval '"
+                            ^ (Parsetree.show_expr lval)
+                            ^ "' in struct assignment in expression '"
+                            ^ (Parsetree.show_expr expr) ^ "'")
+
             in
             let tmp = Temporary rexp_type in
             let add_assign acc exp =
@@ -361,14 +429,17 @@ let construct_ir_tree ast symtab =
             in
             let+ (exprs, _) = Util.flb add_assign ([], 0) exprs in
             StructAssign (rexp_type, rexp, exprs)
-         | _ -> Error "Error: Invalid lvalue expression"
+         | _ -> Error ("Error: Invalid lvalue expression '"
+                       ^ (Parsetree.show_expr lval) ^ "' in expression '"
+                       ^ (Parsetree.show_expr expr) ^ "'")
        in
        resolve_assignment lval rexp
+
     | Parsetree.TypeCast (type_, expr) ->
        let* silktype = Symtab.silktype_of_asttype types_tab_stack type_ in
        let* ir_expr = map_expr scope_map symtab_stack expr in
        let casttype = llvm_type_of_silktype silktype in
-       let+ ir_expr_type = get_ir_expr_type types_tab_stack ir_expr in
+       let+ ir_expr_type = eval_ir_expr_type types_tab_stack ir_expr in
        let rec resolve_cast casttype ir_expr_type = match casttype with
          | F f ->
             begin match ir_expr_type with
@@ -413,16 +484,19 @@ let construct_ir_tree ast symtab =
          | _ -> BitCast (ir_expr_type, ir_expr, casttype)
        in
        resolve_cast casttype ir_expr_type
+
     | Parsetree.FunctionCall (fexp, argexps) ->
        let map_ir_fexp ir_fexp =
-         let* ir_fexp_type = get_ir_expr_type types_tab_stack ir_fexp in
+         let* ir_fexp_type = eval_ir_expr_type types_tab_stack ir_fexp in
          match ir_fexp_type with
          | Function (argtypes, rettype) ->
             let+ args =
               Util.map_join (map_expr scope_map symtab_stack) argexps
             in
             FunctionCall (ir_fexp_type, ir_fexp, argtypes, args)
-         | _ -> Error "Error: Not a function"
+         | _ -> Error ("Error: Expression '" ^ (Parsetree.show_expr fexp)
+                       ^ "' is not a function in expression '"
+                       ^ (Parsetree.show_expr expr) ^ "'")
        in
        begin match map_expr scope_map symtab_stack fexp with
        | Ok e -> map_ir_fexp e
@@ -444,11 +518,12 @@ let construct_ir_tree ast symtab =
             | _ -> Error e
           in process_fexp fexp
        end
+
     | Parsetree.BinOp (lexp_, op_, rexp_) ->
        let* l = map_expr scope_map symtab_stack lexp_ in
        let* r = map_expr scope_map symtab_stack rexp_ in
-       let* l_type = get_ir_expr_type types_tab_stack l in
-       let+ r_type = get_ir_expr_type types_tab_stack r in
+       let* l_type = eval_ir_expr_type types_tab_stack l in
+       let+ r_type = eval_ir_expr_type types_tab_stack r in
        let ptr = match (l_type, r_type) with
          | (Pointer _, _) -> Some (l_type, l, r_type, r)
          | (_, Pointer _) -> Some (r_type, r, l_type, l)
@@ -495,7 +570,7 @@ let construct_ir_tree ast symtab =
          | Parsetree.Deref -> Deref
          | Parsetree.AddressOf -> AddressOf
        in
-       let+ t = get_ir_expr_type types_tab_stack ir_expr in
+       let+ t = eval_ir_expr_type types_tab_stack ir_expr in
        begin match (o, ir_expr) with
        | (AddressOf, UnOp (_, Deref, exp)) -> exp
        | _ -> UnOp (t, o, ir_expr)
@@ -508,7 +583,7 @@ let construct_ir_tree ast symtab =
        in
        let* elems = Util.flb check_elem [] elems in
        let elems = List.rev elems in
-       let+ types = Util.map_join (get_ir_expr_type types_tab_stack) elems in
+       let+ types = Util.map_join (eval_ir_expr_type types_tab_stack) elems in
        StructLiteral (Struct (packed, types), Struct (packed, types), elems)
     | Parsetree.StructInit (pt, elems) ->
        let* silkt = Symtab.silktype_of_asttype types_tab_stack pt in
@@ -523,11 +598,15 @@ let construct_ir_tree ast symtab =
        StructLiteral (t, resolved_t, elems)
     | Parsetree.StructIndexAccess (exp, idx) ->
        let* expr = map_expr scope_map symtab_stack exp in
-       let+ expr_type = get_ir_expr_type types_tab_stack expr in
+       let+ expr_type = eval_ir_expr_type types_tab_stack expr in
        StructAccess (expr_type, expr, idx)
     | Parsetree.StructMemberAccess (exp, name) ->
+       let err = Error ("Error: Cannot access member '" ^ name
+                        ^ "' of non-labeledstruct type in expression '"
+                        ^ (Parsetree.show_expr expr) ^ "'")
+       in
        let* expr = map_expr scope_map symtab_stack exp in
-       let* expr_type = get_ir_expr_type types_tab_stack expr in
+       let* expr_type = eval_ir_expr_type types_tab_stack expr in
        let rec find_member l e i = match l with
          | [] -> -1
          | (n, t) :: tl -> if n = e then i else find_member tl e (i + 1)
@@ -536,7 +615,7 @@ let construct_ir_tree ast symtab =
        let+ t = match expr_type_resolved with
          | StructLabeled (_, l) -> Ok l
          | OpaqueType _ -> Error "1unimplemented"
-         | _ -> Error "Error: Cannot access member of non-labeledstruct type"
+         | _ -> err
        in
        StructAccess (expr_type, expr, find_member t name 0)
 
@@ -546,7 +625,7 @@ let construct_ir_tree ast symtab =
          exp :: acc
        in
        let* elems = Util.flb check_elem [] elems in
-       let+ elem_type = get_ir_expr_type types_tab_stack (List.hd elems) in
+       let+ elem_type = eval_ir_expr_type types_tab_stack (List.hd elems) in
        ArrayElems (Array (List.length elems, elem_type), List.rev elems)
     | Parsetree.ArrayInit (t, len) ->
        let+ t = Symtab.silktype_of_asttype types_tab_stack t in
@@ -555,17 +634,19 @@ let construct_ir_tree ast symtab =
     | Parsetree.Index (array_exp, idx_exp) ->
        let* array = map_expr scope_map symtab_stack array_exp in
        let* idx = map_expr scope_map symtab_stack idx_exp in
-       let* array_type = get_ir_expr_type types_tab_stack array in
-       let* idx_type = get_ir_expr_type types_tab_stack idx in
+       let* array_type = eval_ir_expr_type types_tab_stack array in
+       let* idx_type = eval_ir_expr_type types_tab_stack idx in
        let+ val_type = match array_type with
          | Array (_, t) -> Ok t
-         | _ -> Error "Error: Cannot index non-array type"
+         | _ -> Error ("Error: Cannot index non-array type in expression '"
+                       ^ (Parsetree.show_expr expr) ^ "'")
        in
        UnOp (Pointer val_type, Deref,
              GetElemPtr (array_type, Pointer array_type,
                          UnOp (array_type, AddressOf, array),
                          [(I 32, Literal (I 32, Int 0)); (idx_type, idx)]))
   in
+
 
   let rec map_stmt acc stmt =
     let blk_name i scopes =
@@ -576,11 +657,11 @@ let construct_ir_tree ast symtab =
       let (block_idx, scope_stack, scope_map, symtab_stack, ir_stmts) = acc in
       match Symtab.SymtabM.find (string_of_int block_idx) (List.hd symtab_stack) with
       | Symtab.Value (_, _, Some new_symtab) ->
-         let+ stmts =
-           (map_stmts blk ((string_of_int block_idx) :: scope_stack)
-              scope_map (new_symtab :: symtab_stack)) in
-         List.rev stmts
-      | _ -> Error "Error: Not a block"
+         let+ stmts = (map_stmts blk ((string_of_int block_idx) :: scope_stack)
+                         scope_map (new_symtab :: symtab_stack))
+         in List.rev stmts
+      | _ -> Error ("Error: Statement\n" ^ (Parsetree.show_stmt stmt)
+                    ^ "\n is not a block.")
     in
 
     let map_decl vd acc =
@@ -594,7 +675,8 @@ let construct_ir_tree ast symtab =
       let result = find_in_scope scope_stack symtab_stack name in
       match result with
       | (_, _, Symtab.Type _) ->
-         Error ("Error: Expected value, found type: " ^ name)
+         Error ("Error: Expected value, found type '" ^ name ^ "' in statement\n"
+                ^ (Parsetree.show_stmt stmt))
       | (scopes, _, Symtab.Value (_, type_, _)) ->
          let t = llvm_type_of_silktype type_ in
          let prefix = String.concat "." (List.rev scopes) in
@@ -634,7 +716,13 @@ let construct_ir_tree ast symtab =
                                  else_ir_stmts) in
           (block_idx + 2, scope_stack, scope_map, symtab_stack,
            new_stmt :: ir_stmts)
-       | _ -> Error "Error: Not a block"
+       | (Parsetree.Block _, _) ->
+          Error ("Error: Else statement is not a block, found '"
+                 ^ (Parsetree.show_stmt elseblock) ^ "' in statement\n"
+                 ^ (Parsetree.show_stmt stmt))
+       | _ -> Error ("Error: If statement is not a block, found '"
+                     ^ (Parsetree.show_stmt ifblock) ^ "' in statement\n"
+                     ^ (Parsetree.show_stmt stmt))
        end
     | Parsetree.While (cond_expr, whileblock) ->
        begin match whileblock with
@@ -645,7 +733,9 @@ let construct_ir_tree ast symtab =
                                 cond_ir_exp, while_ir_stmts) in
           (block_idx + 1, scope_stack, scope_map,
            symtab_stack, new_stmt :: ir_stmts)
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: While statement is not a block, found '"
+                     ^ (Parsetree.show_stmt whileblock) ^ "' in statement\n"
+                     ^ (Parsetree.show_stmt stmt))
        end
     | Parsetree.For (vd, cond_expr, inc_expr, forblock) ->
        begin match forblock with
@@ -675,7 +765,9 @@ let construct_ir_tree ast symtab =
                               for_ir_stmts) in
           (block_idx + 1, scope_stack, scope_map, symtab_stack,
            new_stmt :: ir_stmts)
-       | _ -> Error "Error: Not a block"
+       | _ -> Error ("Error: For statement is not a block, found '"
+                     ^ (Parsetree.show_stmt forblock) ^ "' in statement\n"
+                     ^ (Parsetree.show_stmt stmt))
        end
     | Parsetree.Continue ->
        Ok (block_idx, scope_stack, scope_map, symtab_stack, Continue :: ir_stmts)
@@ -690,7 +782,7 @@ let construct_ir_tree ast symtab =
        let new_stmt_res = match ret_ir_exp_opt with
          | Some (Error e) -> Error e
          | Some (Ok ret_expr) ->
-            let+ t = get_ir_expr_type [symtab] ret_expr in
+            let+ t = eval_ir_expr_type [symtab] ret_expr in
             Return (t, Some ret_expr)
          | None -> Ok (Return (Void, None))
        in
@@ -713,7 +805,7 @@ let construct_ir_tree ast symtab =
 
     | Parsetree.TypeDef (name, _) ->
        begin match (Symtab.SymtabM.find name symtab) with
-       | Symtab.Value _ -> Error ("Error: Expected type, found value: " ^ name)
+       | Symtab.Value _ -> Error ("Error: Expected type, found value '" ^ name ^ "'")
        | Symtab.Type t ->
           let t = llvm_type_of_silktype t in
           Ok (scope_map, (TypeDef (t, "%" ^ "\"" ^ name ^ "\"")) :: decls)
@@ -727,7 +819,9 @@ let construct_ir_tree ast symtab =
          | Parsetree.Var  (n, _, e) -> (n, e)
        in
        begin match (Symtab.SymtabM.find name symtab) with
-       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Type _ -> Error ("Error: Expected value, found type '" ^ name
+                                 ^ "' in declaration\n" ^ (Parsetree.show_decl vd)
+                                 ^ "\nin statement\n" ^ (Parsetree.show_top_decl td))
        | Symtab.Value (_, type_, _) ->
           let t = match expr with
             | Parsetree.Literal (Parsetree.LString s) ->
@@ -742,7 +836,8 @@ let construct_ir_tree ast symtab =
     | Parsetree.FuncDecl (pub, (name, args_, _, body)) ->
        let value_ = Symtab.SymtabM.find name symtab in
        begin match value_ with
-       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Type _ -> Error ("Error: Expected value, found type '" ^ name
+                                 ^"' in declaration\n" ^ (Parsetree.show_top_decl td))
        | Symtab.Value (_, Symtab.Function (argtypes, rettype), inner_st) ->
           let rt = llvm_type_of_silktype rettype in
           let silktyped_args =
@@ -777,14 +872,18 @@ let construct_ir_tree ast symtab =
              (scope_map_,
               (FuncDecl (rt, pub, resolved_name, args,
                          ir_stmts @ arg_decl_stmts)) :: decls)
-          | _ -> Error "Error: Function body is not a block"
+          | _ -> Error ("Error: Function body\n" ^ (Parsetree.show_stmt body)
+                        ^ "\nis not a block in declaration\n"
+                        ^ (Parsetree.show_top_decl td))
           end
-       | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+       | _ -> Error ("Error: Symbol '" ^ name ^ "' is not a function in declaration\n"
+                     ^ (Parsetree.show_top_decl td))
        end
     | Parsetree.FuncFwdDecl (name, args_, _, extern) ->
        let value_ = Symtab.SymtabM.find name symtab in
        begin match value_ with
-       | Symtab.Type _ -> Error ("Error: Expected value, found type: " ^ name)
+       | Symtab.Type _ -> Error ("Error: Expected value, found type '" ^ name
+                                 ^ "' in declaration\n" ^ (Parsetree.show_top_decl td))
        | Symtab.Value (_, Symtab.Function (argtypes, rettype), _) ->
           let silktyped_args =
             List.map (fun ((n, _), t) -> (n, t)) (List.combine args_ argtypes)
@@ -800,11 +899,13 @@ let construct_ir_tree ast symtab =
           Ok (scope_map,
               (FuncFwdDecl
                  (rt, resolved_name, args, extern)) :: decls)
-       | _ -> Error ("Error: Symbol " ^ name ^ " is not a function")
+       | _ -> Error ("Error: Symbol '" ^ name ^ "' is not a function in declaration\n"
+                     ^ (Parsetree.show_top_decl td))
        end
   in
   let+ (_, l) = Util.flb map_top_decl (ScopeM.empty, []) ast in
   List.rev l
+
 
 let rec codegen_expr acc expr =
   let (cont_label, brk_label, tmp_idx, tmp_value, insts, last_result) = acc in
