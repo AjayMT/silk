@@ -844,14 +844,14 @@ let rec construct_block_symtab base_symtab symtab_stack rettype stmts =
             Error ("Error: Incorrect return type, expected '"
                    ^ (show_silktype rettype) ^ "' but found '" ^ (show_silktype ext)
                    ^ "' in expression '" ^ (Parsetree.show_expr exp)
-                   ^ "' in statement\n" ^ (Parsetree.show_stmt stmt) ^ "'")
+                   ^ "' in statement\n" ^ (Parsetree.show_stmt stmt))
        | None ->
           if compare_types symtab_stack rettype Void then
             Ok (block_number, symtab)
           else
             Error ("Error: Incorrect return type, expected '"
                    ^ (show_silktype rettype) ^ "' but found '" ^ (show_silktype Void)
-                   ^ "' in statement\n" ^ (Parsetree.show_stmt stmt) ^ "'")
+                   ^ "' in statement\n" ^ (Parsetree.show_stmt stmt))
        end
     | Parsetree.Continue | Parsetree.Break -> Ok (block_number, symtab)
   in
@@ -914,14 +914,14 @@ let construct_symtab ast =
        | None | Some (Type (TypeStub _)) ->
           let+ t = silktype_of_asttype [symtab] basetype in
           SymtabM.add ident (Type t) symtab
-       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration '"
-                          ^ (Parsetree.show_top_decl decl) ^ "' already defined")
+       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration\n"
+                          ^ (Parsetree.show_top_decl decl) ^ "\nalready defined")
        end
     | Parsetree.TypeFwdDef ident ->
        begin match SymtabM.find_opt ident symtab with
        | None -> Ok (SymtabM.add ident (Type (TypeStub ident)) symtab)
-       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration '"
-                          ^ (Parsetree.show_top_decl decl) ^ "' already defined")
+       | Some _ -> Error ("Error: Symbol '" ^ ident ^ "' in declaration\n"
+                          ^ (Parsetree.show_top_decl decl) ^ "\nalready defined")
        end
     | Parsetree.ValDecl (_, vd) -> trav_valdecl symtab [] vd
     | Parsetree.FuncDecl (_, (ident, arglist, ret_asttype, body)) ->
@@ -937,8 +937,8 @@ let construct_symtab ast =
           in
           let+ st = construct_block_symtab new_symtab [nst] rt blk in
           SymtabM.add ident (Value (true, ft, Some st)) symtab
-       | _ -> Error ("Error: Function body of '" ^ ident ^ "' is not a block, found '"
-                     ^ (Parsetree.show_stmt body) ^ "'")
+       | _ -> Error ("Error: Function body of '" ^ ident ^ "' is not a block, found\n"
+                     ^ (Parsetree.show_stmt body))
        end
     | Parsetree.FuncFwdDecl (ident, arglist, ret_asttype, _) ->
        let+ (_, ft) = trav_funcdecl symtab (ident, arglist, ret_asttype) in

@@ -13,9 +13,6 @@ Silk does not aim to be as safe or fast as C++, Rust, etc. The LLVM backend (you
 think I wrote an end-to-end compiler, did you?) does all of the optimization.
 
 As is true of many of my projects, Silk is currently **alpha**-stage software.
-Don't expect it to work well (or at all).
-
-<https://github.com/AjayMT/silk>
 
 ## Syntax
 
@@ -62,7 +59,7 @@ func main() i32 {
 }
 ```
 
-[Here](./syntax.html) is a comprehensive specification of Silk's syntax.
+[Here](http://ajaymt.github.io/silk/syntax.html) is a comprehensive specification of Silk's syntax.
 
 ## Semantics and features
 
@@ -342,18 +339,44 @@ In order to build Silk, you will need:
 - [menhir](http://gallium.inria.fr/~fpottier/menhir/) parser generator
 - [nice-parser](https://github.com/smolkaj/nice-parser) library
 
-Then simply acquire the [source code](https://github.com/AjayMT/silk)
-and `./build.sh`.
+Acquire the [source code](https://github.com/AjayMT/silk) and execute:
 
-This will produce a `silk.exe` executable in the `_build/default/src/` directory.
+```
+$ dune build --profile release @install
+$ dune install
+```
+
+This will place the `silk` executable in your opam `bin` directory.
+
+Alternatively, simply run `build.sh` to place the `silk` executable in the source
+directory.
 
 ## Usage
 
 In order to use Silk, you will need the [LLVM](http://llvm.org/) toolchain.
 
-Since I have not written a CLI yet, the `silk.exe` executable reads Silk from
-stdin and writes LLVM to stdout. LLVM can be compiled to native object files
-with the `llc` tool.
+Running `silk --help` will print a help message:
+
+```
+The Silk compiler.
+
+This program compiles one or more silk files (or input read
+from stdin) and writes LLVM to stdout or the specified output
+file.
+
+Visit http://ajaymt.github.io/silk for documentation.
+
+Usage: silk [options] [file...]
+
+Options:
+  -o <file>     Output file [default: stdout]
+  -             Read input from stdin [default: false]
+  --version     Print version number and exit
+  --help        Print this help message and exit
+```
+
+`silk` reads the specified files (and/or stdin) and compiles them to LLVM. LLVM can
+be compiled to native object files with the `llc` tool.
 
 For example:
 
@@ -365,7 +388,7 @@ func main() i32 {
   printf("hello, world\n");
   return 0;
 }
-$ silk < hello.silk > hello.llvm
+$ silk hello.silk -o hello.llvm
 $ llc -filetype=obj hello.llvm -o hello.o
 $ ld -o hello hello.o -lc
 $ ./hello
@@ -375,7 +398,7 @@ hello, world
 The LLVM output can be compiled directly without writing it to a file:
 
 ```
-$ silk < hello.silk | llc -filetype=obj -o hello.o -
+$ silk hello.silk | llc -filetype=obj -o hello.o -
 ```
 
 Silk does not include a preprocessor or package/module system of any kind. Your
@@ -392,7 +415,6 @@ $ # Compile hello.silk.out as described above
   - Possibly by rewriting the whole thing
 - Better type parameter syntax
 - Cool optimization stuff
-- Make a real CLI
 - More docs!
 
 ## License

@@ -62,10 +62,10 @@ let _ =
 
        Format.set_formatter_out_channel stderr;
        Format.open_box 0;
-       Format.print_string prefix; Format.force_newline (); Format.force_newline ();
+       Format.print_string prefix; Format.force_newline ();
        Format.open_box 2;
        List.iter (fun s -> Format.print_string s; Format.force_newline ()) err;
-       Format.close_box (); Format.print_newline ();
+       Format.close_box ();
        Format.print_string suffix; Format.print_newline ();
        Format.close_box ();
   in

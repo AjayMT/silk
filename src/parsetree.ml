@@ -164,7 +164,10 @@ let rec show_stmt s =
   | Empty -> ";"
   | Decl vd -> (show_decl vd) ^ ";"
   | Expr e -> (show_expr e) ^ ";"
-  | Block stmts -> "{\n" ^ (String.concat "\n" @@ List.map show_stmt stmts) ^ "\n}"
+  | Block stmts ->
+     "{\n"
+     ^ (String.concat "\n" @@ List.map (fun s -> "  " ^ show_stmt s) stmts)
+     ^ "\n}"
   | IfElse (e, ifs, elses) ->
      "if " ^ (show_expr e) ^ " " ^ (show_stmt ifs) ^ " else " ^ (show_stmt elses)
   | While (e, stmts) -> "while " ^ (show_expr e) ^ " " ^ (show_stmt stmts)
