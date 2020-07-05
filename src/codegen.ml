@@ -211,8 +211,12 @@ let rec resolve_alias types_tab_stack t = match t with
  * and simplify top-level declarations.
  *)
 
-(* TODO binops, other things *)
-let rec resolve_literal l = match l with
+(* TODO complex literals *)
+let rec resolve_literal l =
+  let err = Error ("Error: Could not evaluate expression '"
+                   ^ (Parsetree.show_expr l) ^ "' at compile time")
+  in
+  match l with
   | Parsetree.Literal l ->
      begin match l with
      | Parsetree.LI8  i -> Ok (Int i)
@@ -231,9 +235,45 @@ let rec resolve_literal l = match l with
   | Parsetree.BinOp (l, op, r) ->
      let* l = resolve_literal l in
      let* r = resolve_literal r in
-     Error "unimplemented"
-  | _ -> Error ("Error: Could not evaluate expression '"
-                ^ (Parsetree.show_expr l) ^ "' at compile time")
+     let (intf, floatf, boolf) = match op with
+       | Parsetree.Plus -> (Ok (+), Ok (+.), err)
+       | Parsetree.Minus -> (Ok (-), Ok (-.), err)
+       | Parsetree.Times -> (Ok ( * ), Ok ( *. ), err)
+       | Parsetree.Divide -> (Ok (/), Ok (/.), err)
+       | Parsetree.Modulus -> (Ok (mod), err, err)
+       | Parsetree.Equal -> (err, err, Ok (=))
+       | Parsetree.LessThan -> (err, err, Ok (<))
+       | Parsetree.GreaterThan -> (err, err, Ok (>))
+       | Parsetree.And | Parsetree.BitAnd -> (Ok (land), err, err)
+       | Parsetree.Or | Parsetree.BitOr -> (Ok (lor), err, err)
+       | Parsetree.BitXor -> (Ok (lxor), err, err)
+       | Parsetree.LShift -> (Ok (lsl), err, err)
+       | Parsetree.RShift -> (Ok (lsr), err, err) (* TODO arithmetic shift right? *)
+     in
+     begin match (l, r, boolf) with
+     | (Int a, Int b, Error _) -> let+ intf = intf in Int (intf a b)
+     | (Float a, Float b, Error _) ->  let+ floatf = floatf in Float (floatf a b)
+     | (Int a, Int b, Ok boolf) -> Ok (Int (if boolf a b then 1 else 0))
+     | (Float a, Float b, Ok boolf) -> Ok (Float (if boolf a b then 1.0 else 0.0))
+     | _ -> err
+     end
+  | Parsetree.UnOp (op, expr) ->
+     let* expr = resolve_literal expr in
+     let (intf, floatf, boolf) = match op with
+       | Parsetree.UMinus -> (Ok ((-) 0), Ok ((-.) 0.0), err)
+       | Parsetree.Not -> (err, err, Ok (not))
+       | Parsetree.BitNot -> (Ok (lnot), err, err)
+       | _ -> (err, err, err)
+     in
+     begin match (expr, boolf) with
+     | (Int a, Error _) -> let+ intf = intf in Int (intf a)
+     | (Float a, Error _) -> let+ floatf = floatf in Float (floatf a)
+     | (Int a, Ok boolf) ->
+        let r = boolf (if a = 0 then false else true) in
+        Ok (Int (if r then 1 else 0))
+     | _ -> err
+     end
+  | _ -> err
 
 
 (**
