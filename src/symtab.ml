@@ -486,23 +486,30 @@ let rec eval_expr_type symtab_stack expr =
      end
 
   | Parsetree.BinOp (a, op, b) ->
-     let* a_type = eval_expr_type symtab_stack a in
-     let* b_type = eval_expr_type symtab_stack b in
+     let* a_type_unresolved = eval_expr_type symtab_stack a in
+     let* a_type = resolve_type_alias symtab_stack a_type_unresolved in
+     let* b_type_unresolved = eval_expr_type symtab_stack b in
+     let* b_type = resolve_type_alias symtab_stack b_type_unresolved in
      let err =
-       Error ("Error: Incorrect types '"
-              ^ (show_silktype a_type) ^ "', '" ^ (show_silktype b_type)
+       Error ("Error: Incorrect types '" ^ (show_silktype a_type_unresolved)
+              ^ "', '" ^ (show_silktype b_type_unresolved)
               ^ "' for binary operation in expression '"
               ^ (Parsetree.show_expr expr) ^ "'")
      in
      begin match op with
      | Plus | Minus ->
         begin match (a_type, b_type) with
-        | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
+        | (I a, I b) | (U a, U b) | (F a, F b) -> if a = b then Ok a_type else err
         | (Pointer _, I _) | (Pointer _, U _)
           | (MutPointer _, I _) | (MutPointer _, U _) -> Ok a_type
         | _ -> err
         end
-     | Times | Divide | Modulus | BitAnd | BitOr | BitXor
+     | Times | Divide ->
+        begin match (a_type, b_type) with
+        | (I a, I b) | (U a, U b) | (F a, F b) -> if a = b then Ok a_type else err
+        | _ -> err
+        end
+     | Modulus | BitAnd | BitOr | BitXor
        | RShift | LShift ->
         begin match (a_type, b_type) with
         | (I a, I b) | (U a, U b) -> if a = b then Ok a_type else err
@@ -510,7 +517,7 @@ let rec eval_expr_type symtab_stack expr =
         end
      | Equal | LessThan | GreaterThan ->
         begin match (a_type, b_type) with
-        | (I a, I b) | (U a, U b) -> if a = b then Ok Bool else err
+        | (I a, I b) | (U a, U b) | (F a, F b) -> if a = b then Ok Bool else err
         | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
            Ok Bool
         | _ -> err
@@ -522,14 +529,20 @@ let rec eval_expr_type symtab_stack expr =
         end
      end
   | Parsetree.UnOp (op, uexpr) ->
-     let* t = eval_expr_type symtab_stack uexpr in
+     let* t_unresolved = eval_expr_type symtab_stack uexpr in
+     let* t = resolve_type_alias symtab_stack t_unresolved in
      let err =
        Error ("Error: Incorrect type '"
-              ^ (show_silktype t) ^ "' for unary operation in expression '"
+              ^ (show_silktype t_unresolved) ^ "' for unary operation in expression '"
               ^ (Parsetree.show_expr expr) ^ "'")
      in
      begin match op with
-     | Parsetree.UMinus | Parsetree.BitNot ->
+     | Parsetree.UMinus ->
+        begin match t with
+        | I _ | U _ | F _ -> Ok t
+        | _ -> err
+        end
+     | Parsetree.BitNot ->
         begin match t with
         | I _ | U _ -> Ok t
         | _ -> err

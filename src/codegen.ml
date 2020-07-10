@@ -219,16 +219,10 @@ let rec resolve_literal l =
   match l with
   | Parsetree.Literal l ->
      begin match l with
-     | Parsetree.LI8  i -> Ok (Int i)
-     | Parsetree.LI16 i -> Ok (Int i)
-     | Parsetree.LI32 i -> Ok (Int i)
-     | Parsetree.LI64 i -> Ok (Int i)
-     | Parsetree.LU8  i -> Ok (Int i)
-     | Parsetree.LU16 i -> Ok (Int i)
-     | Parsetree.LU32 i -> Ok (Int i)
-     | Parsetree.LU64 i -> Ok (Int i)
-     | Parsetree.LF32 f -> Ok (Float f)
-     | Parsetree.LF64 f -> Ok (Float f)
+     | Parsetree.LI8  i | Parsetree.LI16 i | Parsetree.LI32 i
+       | Parsetree.LI64 i | Parsetree.LU8  i | Parsetree.LU16 i
+       | Parsetree.LU32 i | Parsetree.LU64 i -> Ok (Int i)
+     | Parsetree.LF32 f | Parsetree.LF64 f -> Ok (Float f)
      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
      | Parsetree.LString s -> Ok (GlobalString s)
      end
@@ -285,11 +279,12 @@ let rec resolve_literal l =
  *)
 
 let eval_ir_expr_type types_tab_stack ir_exp = match ir_exp with
-  | Identifier (t, _) -> Ok t
-  | ParamIdentifier (t, _) -> Ok t
-  | Literal (t, _) -> Ok t
-  | Assignment (t, _, _) -> Ok t
-  | Write (t, _, _) -> Ok t
+  | Identifier (t, _) | ParamIdentifier (t, _) | Literal (t, _)
+    | Assignment (t, _, _) | Write (t, _, _) | ItoF (_, _, t)
+    | FtoI (_, _, t) | BitCast (_, _, t) | PtoI (_, _, t) | ItoP (_, _, t)
+    | Trunc (_, _, t) | Ext (_, _, t)  | ArrayElems (t, _) | ArrayInit t
+    | Temporary t | StructAssign (t, _, _) | StructLiteral (t, _, _) -> Ok t
+
   | FunctionCall (t, _, _, _) ->
      begin match t with
      | Function (_, rt) -> Ok rt
@@ -300,18 +295,6 @@ let eval_ir_expr_type types_tab_stack ir_exp = match ir_exp with
      | Equal | GreaterThan | LessThan -> Ok (I 1)
      | _ -> Ok t (* all other binops have the same operand and result types *)
      end
-  | ItoF (_, _, t) -> Ok t
-  | FtoI (_, _, t) -> Ok t
-  | BitCast (_, _, t) -> Ok t
-  | PtoI (_, _, t) -> Ok t
-  | ItoP (_, _, t) -> Ok t
-  | Trunc (_, _, t) -> Ok t
-  | Ext (_, _, t) -> Ok t
-  | ArrayElems (t, _) -> Ok t
-  | ArrayInit t -> Ok t
-  | Temporary t -> Ok t
-  | StructAssign (t, _, _) -> Ok t
-  | StructLiteral (t, _, _) -> Ok t
   | StructAccess (t, exp, i) ->
      let* t = resolve_alias types_tab_stack t in
      begin match t with
