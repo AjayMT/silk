@@ -117,7 +117,7 @@ let rec show_expr e = match e with
        | LU8 i | LU16 i | LU32 i | LU64 i -> string_of_int i
      | LF32 f | LF64 f -> string_of_float f
      | LBool b -> string_of_bool b
-     | LString s -> s
+     | LString s -> "\"" ^ s ^ "\""
      end
   | Assignment (e1, e2) -> (show_expr e1) ^ " = " ^ (show_expr e2)
   | TemplateInstance (name, ts) -> show_type @@ AliasTemplateInstance (name, ts)

@@ -88,7 +88,7 @@ let rec map_expr tmap e = match e with
 let rec map_stmt tmap s =
   let map_vd tmap vd = match vd with
     | ValI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
-    | VarI (n, e) -> let+ e = map_expr tmap e in ValI (n, e)
+    | VarI (n, e) -> let+ e = map_expr tmap e in VarI (n, e)
     | Val (n, t, e) ->
        let* t = map_type tmap t in
        let+ e = map_expr tmap e in
