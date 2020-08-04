@@ -62,13 +62,13 @@ Notably,
 Silk also features parametric polymorphism:
 
 ```
-func add:<$t> (a $t, b $t) $t {
+func add:[$t] (a $t, b $t) $t {
   return a + b;
 }
 
 func main() i32 {
-  val a = add:<i32>(1, 2);
-  val b = add:<i8>('a', 'b');
+  val a = add:[i32](1, 2);
+  val b = add:[i8]('a', 'b');
   return a + i32(b);
 }
 ```
@@ -279,27 +279,25 @@ Silk's types and functions can also accept type parameters:
 
 ```
 // binary tree with key and value
-type bintree:<$key_type, $value_type>;
-type bintree:<$kt, $vt> = struct(
+type bintree:[$key_type, $value_type];
+type bintree:[$kt, $vt] = struct(
   key $kt, value $vt,
-  left mut*bintree:<$kt, $vt>,
-  right mut*bintree:<$kt, $vt>
+  left mut*bintree:[$kt, $vt],
+  right mut*bintree:[$kt, $vt]
 );
 
-func make_bintree_node:<$kt, $vt>(key $kt, value $vt) bintree:<$kt, $vt> {
-  val null = mut*bintree:<$kt, $vt> (0);
-  return bintree:<$kt, $vt>(key, value, null, null);
+func make_bintree_node:[$kt, $vt](key $kt, value $vt) bintree:[$kt, $vt] {
+  val null = mut*bintree:[$kt, $vt] (0);
+  return bintree:[$kt, $vt](key, value, null, null);
 }
 
 func main() i32 {
-  var root = make_bintree_node:<*i8, i32>("hello", 1);
-  var child = make_bintree_node:<*i8, i32>("world", 2);
+  var root = make_bintree_node:[*i8, i32]("hello", 1);
+  var child = make_bintree_node:[*i8, i32]("world", 2);
   root.right = &child;
   return @(root.right).value;
 }
 ```
-
-(This syntax is exceptionally ugly, I'm working on it.)
 
 ### Other miscellaneous things
 

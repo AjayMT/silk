@@ -77,13 +77,13 @@ func main(argc i32, argv **i8) i32 {
 <li><code>extern</code> declares a symbol defined in a different object file.</li>
 </ul>
 <p>Silk also features parametric polymorphism:</p>
-<pre><code>func add:&lt;$t&gt; (a $t, b $t) $t {
+<pre><code>func add:[$t] (a $t, b $t) $t {
   return a + b;
 }
 
 func main() i32 {
-  val a = add:&lt;i32&gt;(1, 2);
-  val b = add:&lt;i8&gt;(&#39;a&#39;, &#39;b&#39;);
+  val a = add:[i32](1, 2);
+  val b = add:[i8](&#39;a&#39;, &#39;b&#39;);
   return a + i32(b);
 }</code></pre>
 <p><a href="./syntax.html">Here</a> is a comprehensive specification of Silk’s syntax.</p>
@@ -228,25 +228,24 @@ func main() i32 {
 }</code></pre>
 <p>Silk’s types and functions can also accept type parameters:</p>
 <pre><code>// binary tree with key and value
-type bintree:&lt;$key_type, $value_type&gt;;
-type bintree:&lt;$kt, $vt&gt; = struct(
+type bintree:[$key_type, $value_type];
+type bintree:[$kt, $vt] = struct(
   key $kt, value $vt,
-  left mut*bintree:&lt;$kt, $vt&gt;,
-  right mut*bintree:&lt;$kt, $vt&gt;
+  left mut*bintree:[$kt, $vt],
+  right mut*bintree:[$kt, $vt]
 );
 
-func make_bintree_node:&lt;$kt, $vt&gt;(key $kt, value $vt) bintree:&lt;$kt, $vt&gt; {
-  val null = mut*bintree:&lt;$kt, $vt&gt; (0);
-  return bintree:&lt;$kt, $vt&gt;(key, value, null, null);
+func make_bintree_node:[$kt, $vt](key $kt, value $vt) bintree:[$kt, $vt] {
+  val null = mut*bintree:[$kt, $vt] (0);
+  return bintree:[$kt, $vt](key, value, null, null);
 }
 
 func main() i32 {
-  var root = make_bintree_node:&lt;*i8, i32&gt;(&quot;hello&quot;, 1);
-  var child = make_bintree_node:&lt;*i8, i32&gt;(&quot;world&quot;, 2);
+  var root = make_bintree_node:[*i8, i32](&quot;hello&quot;, 1);
+  var child = make_bintree_node:[*i8, i32](&quot;world&quot;, 2);
   root.right = &amp;child;
   return @(root.right).value;
 }</code></pre>
-<p>(This syntax is exceptionally ugly, I’m working on it.)</p>
 <h3 id="other-miscellaneous-things">Other miscellaneous things</h3>
 <p>Silk will never implicitly cast or coerce types. This is both a design choice and a product of my own laziness.</p>
 <pre><code>func main() i32 {
