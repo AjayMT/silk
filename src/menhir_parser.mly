@@ -83,13 +83,13 @@ top_decl: type_def             { TypeDef $1 }
 
 type_def: TYPE IDENTIFIER EQ type_ SEMICOLON { ($2, $4) }
 ;
-template_type_def: TYPE IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+template_type_def: TYPE IDENTIFIER COLON LBRACKET template_list RBRACKET
 EQ type_ SEMICOLON { ($5, ($2, $8)) }
 ;
 
 type_fwd_def: TYPE IDENTIFIER SEMICOLON { $2 }
 ;
-template_type_fwd_def: TYPE IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+template_type_fwd_def: TYPE IDENTIFIER COLON LBRACKET template_list RBRACKET
 SEMICOLON { ($5, $2) }
 ;
 
@@ -109,13 +109,13 @@ SEMICOLON { ($3, $5, $7, true) }
   | EXTERN FUNC IDENTIFIER LPAREN RPAREN type_
 SEMICOLON { ($3, [], $6, true) }
 ;
-template_func_fwd_decl: FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+template_func_fwd_decl: FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET
 LPAREN argument_list RPAREN type_ SEMICOLON { ($5, ($2, $8, $10, false)) }
-  | FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN LPAREN RPAREN
+  | FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET LPAREN RPAREN
 type_ SEMICOLON { ($5, ($2, [], $9, false)) }
-  | EXTERN FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+  | EXTERN FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET
 LPAREN argument_list RPAREN type_ SEMICOLON { ($6, ($3, $9, $11, true)) }
-  | EXTERN FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+  | EXTERN FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET
 LPAREN RPAREN type_ SEMICOLON { ($6, ($3, [], $10, true)) }
 ;
 
@@ -124,10 +124,10 @@ func_decl: FUNC IDENTIFIER LPAREN argument_list RPAREN type_ compound_statement
   | FUNC IDENTIFIER LPAREN RPAREN type_ compound_statement
     { ($2, [], $5, $6) }
 ;
-template_func_decl: FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN
+template_func_decl: FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET
 LPAREN argument_list RPAREN type_ compound_statement
     { ($5, ($2, $8, $10, $11)) }
-  | FUNC IDENTIFIER COLON LESSTHAN template_list GREATERTHAN LPAREN RPAREN
+  | FUNC IDENTIFIER COLON LBRACKET template_list RBRACKET LPAREN RPAREN
 type_ compound_statement { ($5, ($2, [], $9, $10)) }
 ;
 
@@ -169,7 +169,7 @@ type_: base_type { $1 }
   | struct_type  { $1 }
   | IDENTIFIER   { TypeAlias $1 }
   | TEMPLATE     { Template $1 }
-  | IDENTIFIER COLON LESSTHAN type_list GREATERTHAN
+  | IDENTIFIER COLON LBRACKET type_list RBRACKET
     { AliasTemplateInstance ($1, $4) }
   | FUNC LPAREN type_list RPAREN type_  { Function ($3, $5) }
   | FUNC LPAREN RPAREN type_            { Function ([], $4) }
@@ -219,7 +219,7 @@ cast_type: base_type        { $1 }
 deref_expr: IDENTIFIER { Identifier $1 }
   | literal            { Literal $1 }
   | LPAREN expr RPAREN { $2 }
-  | IDENTIFIER COLON LESSTHAN type_list GREATERTHAN { TemplateInstance ($1, $4) }
+  | IDENTIFIER COLON LBRACKET type_list RBRACKET { TemplateInstance ($1, $4) }
 
   | LPAREN struct_expr_list RPAREN             { StructLiteral (false, $2) }
   | LPAREN COLON struct_expr_list COLON RPAREN { StructLiteral (true, $3) }

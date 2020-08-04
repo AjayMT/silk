@@ -31,7 +31,7 @@ let rec show_silktype st = match st with
   | StructLabeled (packed, pairs) ->
      let prefix = if packed then "(:" else "(" in
      let suffix = if packed then ":)" else ")" in
-     let serialize_pair (n, t) = n ^ "|" ^ (show_silktype t) in
+     let serialize_pair (n, t) = n ^ " " ^ (show_silktype t) in
      prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
   | Function (args, rt) ->
      "func (" ^ (String.concat ", " @@ List.map show_silktype args) ^ ") "
@@ -557,18 +557,18 @@ let rec eval_expr_type symtab_stack expr =
         | Parsetree.Identifier name ->
            let v = find_symtab_stack name symtab_stack in
            begin match v with
-           | Some (Value (false, _, _)) -> Ok (MutPointer t)
-           | Some (Value (true, _, _)) -> Ok (Pointer t)
+           | Some (Value (false, _, _)) -> Ok (MutPointer t_unresolved)
+           | Some (Value (true, _, _)) -> Ok (Pointer t_unresolved)
            | _ -> err
            end
         | Parsetree.UnOp (Parsetree.Deref, exp) -> eval_expr_type symtab_stack exp
         | Parsetree.Index (array, _) ->
            let+ mut = check_mutable array in
-           if mut then MutPointer t else Pointer t
+           if mut then MutPointer t_unresolved else Pointer t_unresolved
         | Parsetree.StructIndexAccess (exp, _)
           | Parsetree.StructMemberAccess (exp, _) ->
            let+ mut = check_mutable exp in
-           if mut then MutPointer t else Pointer t
+           if mut then MutPointer t_unresolved else Pointer t_unresolved
         | _ -> Error ("Error: Cannot get address of temporary value '"
                       ^ (Parsetree.show_expr uexpr) ^ "' in expression '"
                       ^ (Parsetree.show_expr expr) ^ "'")

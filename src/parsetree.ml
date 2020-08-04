@@ -103,10 +103,10 @@ let rec show_type t = match t with
   | StructLabeled (packed, pairs) ->
      let prefix = if packed then "(:" else "(" in
      let suffix = if packed then ":)" else ")" in
-     let serialize_pair (n, t) = n ^ "|" ^ (show_type t) in
+     let serialize_pair (n, t) = n ^ " " ^ (show_type t) in
      prefix ^ (String.concat "," @@ List.map serialize_pair pairs) ^ suffix
   | AliasTemplateInstance (name, ts) ->
-     name ^ ":<" ^ (String.concat "," @@ List.map show_type ts) ^ ">"
+     name ^ ":[" ^ (String.concat "," @@ List.map show_type ts) ^ "]"
 
 
 let rec show_expr e = match e with
@@ -184,7 +184,7 @@ let rec show_stmt s =
 
 
 let rec show_top_decl td =
-  let templatize_name n ts = n ^ ":<" ^ (String.concat ", " ts) ^ ">" in
+  let templatize_name n ts = n ^ ":[" ^ (String.concat ", " ts) ^ "]" in
   let show_args args =
     let show_arg (name, t) = name ^ " " ^ (show_type t) in
     String.concat ", " @@ List.map show_arg args
