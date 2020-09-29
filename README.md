@@ -285,8 +285,6 @@ func main() i32 {
 }
 ```
 
-(This syntax is exceptionally ugly, I'm working on it.)
-
 ### Other miscellaneous things
 
 Silk will never implicitly cast or coerce types. This is both a design choice and a

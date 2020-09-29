@@ -140,7 +140,7 @@ let rec show_expr e = match e with
        | RShift -> " >> " | LShift -> " << " | BitAnd -> " & " | BitOr -> " | "
        | BitXor -> " ^ "
      in
-     (show_expr e1) ^ op_str ^ (show_expr e2)
+     "(" ^ (show_expr e1) ^ op_str ^ (show_expr e2) ^ ")"
   | UnOp (op, e) ->
      let op_str = match op with
        | UMinus -> "-" | Not -> "!" | BitNot -> "~"
