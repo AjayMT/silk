@@ -1578,7 +1578,11 @@ let serialize_irt irt_roots =
        let access_str = if pub then "global" else "private global" in
        begin match l with
        | GlobalString s ->
-          let str_name = name ^ ".str" in
+          (* TODO: Fix this ugly hack to get around the fact that
+             `name` includes quotes *)
+          let str_name =
+            (String.sub name 0 ((String.length name) - 1)) ^ ".str\""
+          in
           let+ str_insts =
             serialize_irt str_insts @@ StaticDecl (t, false, str_name, String_ s)
           in
