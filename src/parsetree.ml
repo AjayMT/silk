@@ -8,6 +8,7 @@ type literal = LI8 of int | LI16 of int | LI32 of int | LI64 of int
                | LF32 of float | LF64 of float
                | LBool of bool
                | LString of string
+               | LNil
 
 type bin_op = Plus | Minus | Times | Divide | Modulus
               | Equal | LessThan | GreaterThan
@@ -118,6 +119,7 @@ let rec show_expr e = match e with
      | LF32 f | LF64 f -> string_of_float f
      | LBool b -> string_of_bool b
      | LString s -> "\"" ^ s ^ "\""
+     | LNil -> "nil"
      end
   | Assignment (e1, e2) -> (show_expr e1) ^ " = " ^ (show_expr e2)
   | TemplateInstance (name, ts) -> show_type @@ AliasTemplateInstance (name, ts)

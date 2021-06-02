@@ -210,6 +210,7 @@ let silktype_of_literal_type l = match l with
   | Parsetree.LF64 _ -> F 64
   | Parsetree.LBool _ -> Bool
   | Parsetree.LString _ -> Pointer (I 8)
+  | Parsetree.LNil -> Pointer (I 8)
 
 
 (**
@@ -500,6 +501,8 @@ let rec eval_expr_type symtab_stack expr =
      | Plus | Minus ->
         begin match (a_type, b_type) with
         | (I a, I b) | (U a, U b) | (F a, F b) -> if a = b then Ok a_type else err
+        | (I _, Pointer _) | (U _, Pointer _)
+          | (I _, MutPointer _) | (U _, MutPointer _) -> Ok b_type
         | (Pointer _, I _) | (Pointer _, U _)
           | (MutPointer _, I _) | (MutPointer _, U _) -> Ok a_type
         | _ -> err
@@ -518,9 +521,11 @@ let rec eval_expr_type symtab_stack expr =
      | Equal | LessThan | GreaterThan ->
         begin match (a_type, b_type) with
         | (I a, I b) | (U a, U b) | (F a, F b) -> if a = b then Ok Bool else err
-        | (Bool, Bool) | (Pointer _, Pointer _) | (MutPointer _, MutPointer _) ->
-           Ok Bool
-        | _ -> err
+        | (Bool, Bool) -> Ok Bool
+        | (Pointer a, Pointer b) | (MutPointer a, MutPointer b)
+          | (Pointer a, MutPointer b) | (MutPointer a, Pointer b) ->
+           if compare_types a b then Ok Bool else err
+        | _ -> Ok Bool
         end
      | And | Or ->
         begin match (a_type, b_type) with

@@ -1,0 +1,13 @@
+
+func main() void {
+  val a = *i8(nil);
+  val b = *i8(nil);
+
+  a == b;
+  a > b;
+  a < b;
+  b == a;
+  a + 12;
+  12 + a;
+  13 - b;
+}

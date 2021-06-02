@@ -38,7 +38,7 @@ type llvm_type = I of int
                | Void
 
 type ir_literal = Int of int | Float of float | String_ of string
-                  | GlobalString of string
+                  | GlobalString of string | Nil
 type ir_bin_op = Plus | Minus | Times | Divide | Modulus
                  | Equal | LessThan | GreaterThan
                  | And | Or
@@ -225,6 +225,7 @@ let rec resolve_literal l =
      | Parsetree.LF32 f | Parsetree.LF64 f -> Ok (Float f)
      | Parsetree.LBool b -> Ok (Int (if b then 1 else 0))
      | Parsetree.LString s -> Ok (GlobalString s)
+     | Parsetree.LNil -> Ok Nil
      end
   | Parsetree.BinOp (l, op, r) ->
      let* l = resolve_literal l in
@@ -400,6 +401,7 @@ let construct_ir_tree ast symtab =
        | Parsetree.LF64 f -> Ok (Literal (F 64, Float f))
        | Parsetree.LBool b -> Ok (Literal (I 1, Int (if b then 1 else 0)))
        | Parsetree.LString s -> Ok (Literal (Pointer (I 8), String_ s))
+       | Parsetree.LNil -> Ok (Literal (Pointer (I 8), Nil))
        end
 
     | Parsetree.Assignment (lval, exp) ->
@@ -1373,6 +1375,7 @@ let rec serialize_type t = match t with
 let serialize_literal l = match l with
   | Int i -> string_of_int i
   | Float f -> string_of_float f
+  | Nil -> "null"
   | String_ s | GlobalString s ->
      let string_of_list l =
        let buf = Buffer.create 16 in

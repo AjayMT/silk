@@ -46,6 +46,7 @@ rule token = parse
 | "false"     { FALSE }
 | "struct"    { STRUCT }
 | "packed"    { PACKED }
+| "nil"       { NIL }
 | leadingChar nonleadingChar* as ident { IDENTIFIER (ident) }
 | "$" nonleadingChar+ as template      { TEMPLATE (template) }
 

@@ -30,7 +30,7 @@ ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token DEREF
 %token LPAREN RPAREN LCURLY RCURLY LBRACKET RBRACKET
 %token COMMA DOT COLON SEMICOLON
-%token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED
+%token MUT I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 VOID BOOL TRUE FALSE STRUCT PACKED NIL
 %token TYPE VAL VAR FUNC EXTERN PRIVATE
 %token IF ELSE FOR WHILE CONTINUE BREAK RETURN
 %token EOF
@@ -305,17 +305,18 @@ _expr_list: expr          { [$1] }
   | _expr_list COMMA expr { $3 :: $1 }
 ;
 
-literal: I8_LITERAL  { LI8 $1 }
-  | I16_LITERAL      { LI16 $1 }
-  | I32_LITERAL      { LI32 $1 }
-  | I64_LITERAL      { LI64 $1 }
-  | U8_LITERAL       { LU8 $1 }
-  | U16_LITERAL      { LU16 $1 }
-  | U32_LITERAL      { LU32 $1 }
-  | U64_LITERAL      { LU64 $1 }
-  | F32_LITERAL      { LF32 $1 }
-  | F64_LITERAL      { LF64 $1 }
-  | TRUE             { LBool true }
-  | FALSE            { LBool false }
-  | STRING_LITERAL   { LString $1 }
+literal: I8_LITERAL { LI8 $1 }
+  | I16_LITERAL     { LI16 $1 }
+  | I32_LITERAL     { LI32 $1 }
+  | I64_LITERAL     { LI64 $1 }
+  | U8_LITERAL      { LU8 $1 }
+  | U16_LITERAL     { LU16 $1 }
+  | U32_LITERAL     { LU32 $1 }
+  | U64_LITERAL     { LU64 $1 }
+  | F32_LITERAL     { LF32 $1 }
+  | F64_LITERAL     { LF64 $1 }
+  | TRUE            { LBool true }
+  | FALSE           { LBool false }
+  | STRING_LITERAL  { LString $1 }
+  | NIL             { LNil }
 ;
