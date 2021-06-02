@@ -1,5 +1,9 @@
 type t:[$t] = struct($t);
 
-func main() void {
+func main() i32 {
   var a = t:[t:[i32]](t:[i32](1));
+  for var i = 0; i < 10; i += 1 {
+    (a.0).0 += 1;
+  }
+  return (a.0).0;
 }
