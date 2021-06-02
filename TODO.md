@@ -1,13 +1,3 @@
-`nil` literal:
-```
-val a *i8 = *i8(nil); // would require a new nil_type?
-val b mut*i8 = mut*i8(nil);
-// ideally, remove the cast altogether
-// any ptr can be assigned/compared to nil_type
-```
-
----
-
 Fix shift/reduce conflict
 
 ---
