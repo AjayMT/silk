@@ -35,7 +35,12 @@ Table of Contents
 <ul>
 <li><a href="#primitive-types">Primitive Types</a></li>
 <li><a href="#derived-types">Derived Types</a></li>
-<li><a href="#values">Values</a></li>
+<li><a href="#values">Values</a>
+<ul>
+<li><a href="#compound-values">Compound Values</a></li>
+</ul></li>
+<li><a href="#declarations">Declarations</a></li>
+<li><a href="#pointers">Pointers</a></li>
 </ul>
 </nav>
 </details>
@@ -183,5 +188,62 @@ Table of Contents
 <p><code>*i8</code> (“string”) literals:</p>
 <pre><code>&quot;hello\n&quot;, &quot;asdf&quot;, nil</code></pre>
 <p>The special <code>nil</code> literal is the same value as <code>0</code> but is of type <code>*i8</code>. It is useful for setting immutable pointers to zero since they cannot be cast to or from integers or mutable pointers.</p>
+<pre><code>var a = nil; // a is of type *i8
+var b = *i32(nil); // b is of type *i32
+var c = *my_type(nil); // c is of type *my_type</code></pre>
+<h3 id="compound-values">Compound Values</h3>
+<p>Arrays are constructed with curly braces:</p>
+<pre><code>val i32array = { 12, 13, 14 };
+i32array[0]; i32array[1]; i32array[i32array[1]]; // elements accessed by index</code></pre>
+<p>Zero-initialized arrays can be constructed with the following syntax:</p>
+<pre><code>val zero_array = [i32; 3]; // equivalent to { 0, 0, 0 }</code></pre>
+<p>Packed and non-packed unlabeled structs:</p>
+<pre><code>val a = (1, &#39;a&#39;, 3ul); // struct with members of type i32, i8 and u64
+val b = (: nil, 0xff :) // packed struct with members of type *i8 and i32
+a.0; a.1; a.2; // members are accessed by index</code></pre>
+<p>Packed and non-packed labeled structs:</p>
+<pre><code>val a = struct(foo i32, bar i8)(12, &#39;a&#39;); // struct with members foo and bar
+val b = packed(asdf u64, qwer i32)(3ul, 12); // packed struct with members asdf and qwer
+a.foo; a.bar; // members are accessed by name
+
+type my_type = struct(one i32, two i32);
+val c = my_type(1, 2);
+c.one; c.two;</code></pre>
+<h2 id="declarations">Declarations</h2>
+<p>Variables and constants are declared with <code>var</code> and <code>val</code> respectively. The mutability of variables and constants applies to their members/elements as well.</p>
+<pre><code>var a = 1;
+a = 2; // mutable
+val b = 0; // immutable
+
+var c = (1, 2, 3);
+c.0 = 12; // mutable
+val d = (3, 4, 5); // immutable
+
+var b = [2; i32];
+b[0] = 1; // mutable
+val c = { 0xae, 0xbeef, 0xc0ffee }; // immutable</code></pre>
+<p>Types can be specified explicity:</p>
+<pre><code>var a i32 = 0;
+val b struct(i8, struct(i32, i32)) = (&#39;a&#39;, (0, 1));</code></pre>
+<p>Function declarations:</p>
+<pre><code>func f(a i32, b i32) void; // forward declaration
+
+func main(argc i32, argv **i8) i32 {
+  f();
+  return 0;
+}
+
+func f(a i32, b i32) void {}</code></pre>
+<p>Functions are public by default but can be made private with the <code>private</code> keyword:</p>
+<pre><code>private func secret() void {}</code></pre>
+<p>Functions declared with <code>extern</code> are assumed to be defined in a different object file:</p>
+<pre><code>extern func printf(s *i8) void;
+
+func main(argc i32, argv **i8) i32 {
+  printf(&quot;hello\n&quot;);
+  return 0;
+}</code></pre>
+<h2 id="pointers">Pointers</h2>
+<p>Pointers can be mutable (read + write) or immutable (read-only).</p>
 </body>
 </html>
