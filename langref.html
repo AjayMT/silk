@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>langref</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="style.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<h1 style="color:#f2983f;font-size:40pt;">
+〈Silk〉
+</h1>
+<p style="padding:10px;border-top:5px solid #f2983f;background-color:#eee;font-size:13pt;">
+<a href="./index.html">Overview</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk">Source Code</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk/issues">Bug Tracker</a> <span style="padding-left:20px"></span> <a href="./langref.html">Language Reference</a>
+</p>
+<br />
+<details>
+<summary>
+Table of Contents
+</summary>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#primitive-types">Primitive Types</a></li>
+<li><a href="#derived-types">Derived Types</a></li>
+<li><a href="#values">Values</a></li>
+</ul>
+</nav>
+</details>
+<h2 id="primitive-types">Primitive Types</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Primitive Type</th>
+<th>Equivalent C Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>i8</code></td>
+<td><code>int8_t</code></td>
+<td>8-bit signed integer</td>
+</tr>
+<tr class="even">
+<td><code>i16</code></td>
+<td><code>int16_t</code></td>
+<td>16-bit signed integer</td>
+</tr>
+<tr class="odd">
+<td><code>i32</code></td>
+<td><code>int32_t</code></td>
+<td>32-bit signed integer</td>
+</tr>
+<tr class="even">
+<td><code>i64</code></td>
+<td><code>int64_t</code></td>
+<td>64-bit signed integer</td>
+</tr>
+<tr class="odd">
+<td><code>u8</code></td>
+<td><code>uint8_t</code></td>
+<td>8-bit unsigned integer</td>
+</tr>
+<tr class="even">
+<td><code>u16</code></td>
+<td><code>uint16_t</code></td>
+<td>16-bit unsigned integer</td>
+</tr>
+<tr class="odd">
+<td><code>u32</code></td>
+<td><code>uint32_t</code></td>
+<td>32-bit unsigned integer</td>
+</tr>
+<tr class="even">
+<td><code>u64</code></td>
+<td><code>uint64_t</code></td>
+<td>64-bit unsigned integer</td>
+</tr>
+<tr class="odd">
+<td><code>f32</code></td>
+<td><code>float</code></td>
+<td>32-bit floating point value</td>
+</tr>
+<tr class="even">
+<td><code>f64</code></td>
+<td><code>double</code></td>
+<td>64-bit floating point value</td>
+</tr>
+<tr class="odd">
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+<td>Boolean value</td>
+</tr>
+<tr class="even">
+<td><code>void</code></td>
+<td><code>void</code></td>
+<td>Void type</td>
+</tr>
+</tbody>
+</table>
+<h2 id="derived-types">Derived Types</h2>
+<p>Given arbitrary types <code>a</code>, <code>b</code>, <code>c</code> and non-negative integer <code>n</code>:</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 42%" />
+<col style="width: 27%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Derived Type</th>
+<th>Equivalent C Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>*a</code></td>
+<td><code>const a*</code></td>
+<td>Immutable pointer to <code>a</code></td>
+</tr>
+<tr class="even">
+<td><code>mut*a</code></td>
+<td><code>a*</code></td>
+<td>Mutable pointer to <code>a</code></td>
+</tr>
+<tr class="odd">
+<td><code>func (a, b) c</code></td>
+<td><code>const c (*foo)(a, b)</code></td>
+<td>Immutable pointer to a function</td>
+</tr>
+<tr class="even">
+<td><code>[n]a</code></td>
+<td><code>a[n]</code></td>
+<td>Array of <code>a</code> of size <code>n</code></td>
+</tr>
+<tr class="odd">
+<td><code>struct(a, b)</code></td>
+<td>N/A</td>
+<td>Unlabeled struct</td>
+</tr>
+<tr class="even">
+<td><code>struct(foo a, bar b)</code></td>
+<td><code>struct { a foo; b bar; }</code></td>
+<td>Labeled struct</td>
+</tr>
+<tr class="odd">
+<td><code>packed(a, b)</code></td>
+<td>N/A</td>
+<td>Packed unlabeled struct</td>
+</tr>
+<tr class="even">
+<td><code>packed(foo a, bar b)</code></td>
+<td><code>struct { a foo; b bar; } __attribute__((packed))</code></td>
+<td>Packed labeled struct</td>
+</tr>
+</tbody>
+</table>
+<h2 id="values">Values</h2>
+<p><code>i32</code> literals expressed in decimal, hexadecimal, octal and binary:</p>
+<pre><code>12, 0xff, 0o127, 0b10101</code></pre>
+<p><code>i8</code>, <code>i16</code>, <code>i64</code> literals:</p>
+<pre><code>100c, 128h, 55l</code></pre>
+<p><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code> literals:</p>
+<pre><code>123uc, 85uh, 10u, 15ul</code></pre>
+<p><code>i8</code> literals expressed as characters:</p>
+<pre><code>&#39;a&#39;, &#39;b&#39;, &#39;\n&#39;, &#39;\\&#39;</code></pre>
+<p><code>bool</code> literals:</p>
+<pre><code>true, false</code></pre>
+<p><code>*i8</code> (“string”) literals:</p>
+<pre><code>&quot;hello\n&quot;, &quot;asdf&quot;, nil</code></pre>
+<p>The special <code>nil</code> literal is the same value as <code>0</code> but is of type <code>*i8</code>. It is useful for setting immutable pointers to zero since they cannot be cast to or from integers or mutable pointers.</p>
+</body>
+</html>

@@ -11,6 +11,8 @@
     span.underline{text-decoration: underline;}
     div.column{display: inline-block; vertical-align: top; width: 50%;}
     div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
   </style>
   <link rel="stylesheet" href="style.css" />
   <!--[if lt IE 9]>
@@ -22,11 +24,13 @@
 〈Silk〉
 </h1>
 <p style="padding:10px;border-top:5px solid #f2983f;background-color:#eee;font-size:13pt;">
-<a href="https://github.com/AjayMT/silk">Source Code</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk/issues">Bug Tracker</a> <span style="padding-left:20px"></span> <a href="./syntax.html">Syntax Specification</a>
+<a href="./index.html">Overview</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk">Source Code</a> <span style="padding-left:20px"></span> <a href="https://github.com/AjayMT/silk/issues">Bug Tracker</a> <span style="padding-left:20px"></span> <a href="./langref.html">Language Reference</a>
 </p>
 <br />
 <details>
-<p><summary>Table of Contents</summary></p>
+<summary>
+Table of Contents
+</summary>
 <nav id="TOC" role="doc-toc">
 <ul>
 <li><a href="#syntax">Syntax</a></li>
@@ -86,7 +90,6 @@ func main() i32 {
   val b = add:[i8](&#39;a&#39;, &#39;b&#39;);
   return a + i32(b);
 }</code></pre>
-<p><a href="./syntax.html">Here</a> is a comprehensive specification of Silk’s syntax.</p>
 <h2 id="semantics-and-features">Semantics and features</h2>
 <p>Silk is an <strong>imperative</strong> and <strong>statically typed</strong> language.</p>
 <p>Though safety is not a primary design goal, Silk’s features make writing unsafe code more difficult than it would otherwise be.</p>

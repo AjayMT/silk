@@ -3,11 +3,13 @@ toc: true
 include-before: |
     <h1 style="color:#f2983f;font-size:40pt;">〈Silk〉</h1>
     <p style="padding:10px;border-top:5px solid #f2983f;background-color:#eee;font-size:13pt;">
+    [Overview](./index.html)
+    <span style="padding-left:20px"></span>
     [Source Code](https://github.com/AjayMT/silk)
     <span style="padding-left:20px"></span>
     [Bug Tracker](https://github.com/AjayMT/silk/issues)
     <span style="padding-left:20px"></span>
-    [Syntax Specification](./syntax.html)
+    [Language Reference](./langref.html)
     </p>
     <br />
     <details><summary>Table of Contents</summary>
@@ -72,8 +74,6 @@ func main() i32 {
   return a + i32(b);
 }
 ```
-
-[Here](./syntax.html) is a comprehensive specification of Silk's syntax.
 
 ## Semantics and features
 
